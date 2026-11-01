@@ -22,8 +22,23 @@ import me.acardia.amalor.PackageUpdateOptions;
 
 /** Appearance only: retain PackageUpdateActivity's icon, message and update lifecycle. */
 public final class PackageUpdateHook {
+    private static final String ACTIVITY = "com.android.wm.shell.packageupdate.PackageUpdateActivity";
+
+    /**
+     * ColorOS 15 has no {@code PackageUpdateActivity} at all, so the whole feature is absent
+     * there. Returning quietly keeps the other hooks installing instead of logging a failure.
+     */
+    public static boolean isAvailable(ClassLoader loader) {
+        try {
+            Class.forName(ACTIVITY, false, loader);
+            return true;
+        } catch (Throwable absent) {
+            return false;
+        }
+    }
+
     public static void install(XposedModule module, ClassLoader loader) throws ReflectiveOperationException {
-        Class<?> activity = loader.loadClass("com.android.wm.shell.packageupdate.PackageUpdateActivity");
+        Class<?> activity = loader.loadClass(ACTIVITY);
         Class<?> modifier = loader.loadClass("androidx.compose.ui.Modifier");
         Class<?> composer = loader.loadClass("androidx.compose.runtime.Composer");
         Class<?> function = loader.loadClass("kotlin.jvm.functions.Function2");

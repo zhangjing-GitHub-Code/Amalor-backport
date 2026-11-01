@@ -27,22 +27,33 @@ public final class ModuleEntry extends XposedModule {
     private synchronized void install(ClassLoader loader) {
         if (loader == null) return;
         if (!packageUpdateInstalled) {
-            try {
-                PackageUpdateHook.install(this, loader);
+            // ColorOS 15 has no PackageUpdateActivity; skip it instead of retrying forever.
+            if (!PackageUpdateHook.isAvailable(loader)) {
                 packageUpdateInstalled = true;
-                log(Log.INFO, "Amalor", "installed package update appearance hook");
-            } catch (Throwable error) {
-                log(Log.ERROR, "Amalor", "package update appearance hook failed", error);
+                log(Log.INFO, "Amalor", "package update appearance is absent on this build");
+            } else {
+                try {
+                    PackageUpdateHook.install(this, loader);
+                    packageUpdateInstalled = true;
+                    log(Log.INFO, "Amalor", "installed package update appearance hook");
+                } catch (Throwable error) {
+                    log(Log.ERROR, "Amalor", "package update appearance hook failed", error);
+                }
             }
         }
         networkType.install(loader);
         if (!oplusBatteryInstalled) {
-            try {
-                OplusHorizontalBatteryHook.install(this, loader);
+            if (!OplusHorizontalBatteryHook.isAvailable(loader)) {
                 oplusBatteryInstalled = true;
-                log(Log.INFO, "Amalor", "installed Oplus horizontal battery body fill hook");
-            } catch (Throwable error) {
-                log(Log.ERROR, "Amalor", "Oplus horizontal battery body fill hook failed", error);
+                log(Log.INFO, "Amalor", "Oplus battery pipeline is absent on this build");
+            } else {
+                try {
+                    OplusHorizontalBatteryHook.install(this, loader);
+                    oplusBatteryInstalled = true;
+                    log(Log.INFO, "Amalor", "installed Oplus horizontal battery body fill hook");
+                } catch (Throwable error) {
+                    log(Log.ERROR, "Amalor", "Oplus horizontal battery body fill hook failed", error);
+                }
             }
         }
     }
