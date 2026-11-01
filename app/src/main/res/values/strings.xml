@@ -69,4 +69,5 @@
     <string name="confirm">Confirm</string>
     <string name="config_system_ui_blur">Blur</string>
     <string name="config_system_ui_monet">Monet</string>
+    <string name="config_style_unavailable">This theme module version ships a fixed overlay, so the System UI style cannot be switched at runtime.</string>
 </resources>

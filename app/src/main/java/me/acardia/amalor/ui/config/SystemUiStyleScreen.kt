@@ -96,6 +96,15 @@ fun SystemUiStyleScreen(
                     menuContent = {},
                 )
             }
+            // A static-overlay theme build has no config.conf, so the switch cannot work.
+            if (!enabled) {
+                Text(
+                    text = stringResource(R.string.config_style_unavailable),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp, start = 4.dp, end = 4.dp),
+                )
+            }
             SegmentedColumn(modifier = Modifier.padding(top = 8.dp), contentPadding = PaddingValues(0.dp)) {
                 item { shape ->
                     BaseWidget(

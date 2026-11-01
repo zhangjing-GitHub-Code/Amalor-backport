@@ -85,4 +85,5 @@
     <string name="confirm">确定</string>
     <string name="config_system_ui_blur">模糊</string>
     <string name="config_system_ui_monet">莫奈</string>
+    <string name="config_style_unavailable">当前主题模块版本使用固定 overlay，系统界面风格无法在运行时切换。</string>
 </resources>

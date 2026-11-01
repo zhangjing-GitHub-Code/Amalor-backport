@@ -251,21 +251,23 @@ fun AmalorApp(
             entry<AmalorRoute.SystemUiStyle>(swipeDismiss = NavSwipeDirection.LeftToRight) {
                 SystemUiStyleScreen(
                     style = rootState?.config?.style ?: ModuleConfig.default.style,
-                    enabled = rootState?.authorized == true && rootState?.moduleInstalled == true,
+                    enabled = rootState?.authorized == true
+                        && rootState?.moduleInstalled == true
+                        && rootState?.styleSwitchable == true,
                     onBack = { navigator.pop() },
                     onStyleChange = { style ->
-                                val state = rootState ?: return@SystemUiStyleScreen
-                                val requested = ModuleConfig(style)
-                                if (state.config == requested) return@SystemUiStyleScreen
-                                scope.launch(Dispatchers.IO) {
-                                    val applied = writeModuleStyle(style)
-                                    withContext(Dispatchers.Main) {
-                                        rootState = rootState?.copy(
-                                            config = if (applied) requested else rootState?.config ?: ModuleConfig.default,
-                                        )
-                                    }
-                                }
-                            },
+                        val state = rootState ?: return@SystemUiStyleScreen
+                        val requested = ModuleConfig(style)
+                        if (state.config == requested) return@SystemUiStyleScreen
+                        scope.launch(Dispatchers.IO) {
+                            val applied = writeModuleStyle(style)
+                            withContext(Dispatchers.Main) {
+                                rootState = rootState?.copy(
+                                    config = if (applied) requested else rootState?.config ?: ModuleConfig.default,
+                                )
+                            }
+                        }
+                    },
                     onOpenStatusBar = { navigator.push(AmalorRoute.StatusBar) },
                     onOpenOther = { navigator.push(AmalorRoute.SystemUiOther) },
                 )
@@ -323,10 +325,25 @@ fun AmalorApp(
         }
 }
 
+/**
+ * Persist the SystemUI style for the theme module.
+ *
+ * Only the config-file build of Material You for ColorOS supports a runtime style switch.
+ * Newer releases ship a static overlay and no config.conf, so the write fails and the UI
+ * must not pretend the change was applied.
+ */
 private fun writeModuleStyle(style: Int): Boolean = runCatching {
-    val command = "sed -i 's/^systemui_style=.*/systemui_style=\"$style\"/' /data/adb/modules/material_you_for_coloros/config.conf"
+    val config = MODULE_PATH + "/config.conf"
+    val command = "test -f $config && sed -i 's/^systemui_style=.*/systemui_style=\"$style\"/' $config"
     Runtime.getRuntime().exec(arrayOf("su", "-c", command)).waitFor() == 0
 }.getOrDefault(false)
+
+/** Whether the installed theme module still exposes a runtime style switch. */
+private fun canSwitchModuleStyle(): Boolean = runCatching {
+    Runtime.getRuntime().exec(arrayOf("su", "-c", "test -f " + MODULE_PATH + "/config.conf")).waitFor() == 0
+}.getOrDefault(false)
+
+private const val MODULE_PATH = "/data/adb/modules/material_you_for_coloros"
 
 private fun restartSystemUi(): Boolean = runCatching {
     Runtime.getRuntime().exec(arrayOf("su", "-c", "killall com.android.systemui")).waitFor() == 0
@@ -381,6 +398,8 @@ private data class RootState(
     val source: String? = null,
     val deviceName: String = "",
     val config: ModuleConfig = ModuleConfig.default,
+    /** False on theme-module releases that ship a static overlay with no config.conf. */
+    val styleSwitchable: Boolean = false,
 ) {
     companion object {
         fun detect(): RootState {
@@ -402,12 +421,13 @@ private data class RootState(
                     }
             }.getOrNull()
 
-            val modulePath = "/data/adb/modules/material_you_for_coloros"
+            val modulePath = MODULE_PATH
             val moduleInstalled = runCatching {
                 Runtime.getRuntime().exec(arrayOf("su", "-c", "test -d $modulePath")).waitFor() == 0
             }.getOrDefault(false)
+            val styleSwitchable = moduleInstalled && canSwitchModuleStyle()
             val version = runCatching {
-                Runtime.getRuntime().exec(arrayOf("su", "-c", "cat /data/adb/modules/material_you_for_coloros/module.prop"))
+                Runtime.getRuntime().exec(arrayOf("su", "-c", "cat $MODULE_PATH/module.prop"))
                     .inputStream.bufferedReader().use { reader ->
                         reader.readLines()
                             .firstOrNull { it.startsWith("version=") }
@@ -415,13 +435,22 @@ private data class RootState(
                             ?.takeIf { it.isNotBlank() }
                     }
             }.getOrNull()
-            return RootState(authorized, moduleInstalled, version, Privilege.ROOT, source, deviceName, readModuleConfig())
+            return RootState(
+                authorized = authorized,
+                moduleInstalled = moduleInstalled,
+                moduleVersion = version,
+                privilege = Privilege.ROOT,
+                source = source,
+                deviceName = deviceName,
+                config = readModuleConfig(),
+                styleSwitchable = styleSwitchable,
+            )
         }
     }
 }
 
 private fun readModuleConfig(): ModuleConfig = runCatching {
-    Runtime.getRuntime().exec(arrayOf("su", "-c", "cat /data/adb/modules/material_you_for_coloros/config.conf"))
+    Runtime.getRuntime().exec(arrayOf("su", "-c", "cat $MODULE_PATH/config.conf"))
         .inputStream.bufferedReader().use { reader ->
             val values = reader.readLines().mapNotNull { it.substringAfter('=', "").trim().trim('"').toIntOrNull() }
             values.firstOrNull()?.let(::ModuleConfig) ?: ModuleConfig.default
