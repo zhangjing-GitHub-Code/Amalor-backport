@@ -79,6 +79,8 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
     private var activeAttr = 0
     private var unavailableAttr = 0
     private var inoperableAttr = 0
+    // False on ColorOS 15, where TileViewFlag does not exist and the tile model carries the state.
+    private var nativeTileFlags = false
 
     internal data class Colors(
         val active: Int, val onActive: Int, val inactive: Int, val inactiveIcon: Int,
@@ -115,11 +117,7 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
         var pending: OneShotPreDrawListener? = null
     }
     fun install() {
-        val flag = r.type("com.oplus.systemui.qs.base.res.model.TileViewFlag")
-        val attr = flag.getDeclaredMethod("getAttr")
-        activeAttr = attr.invoke(flag.getDeclaredField("Active").get(null)) as Int
-        unavailableAttr = attr.invoke(flag.getDeclaredField("Unavailable").get(null)) as Int
-        inoperableAttr = attr.invoke(flag.getDeclaredField("Inoperable").get(null)) as Int
+        resolveTileFlagAttrs()
         val failures = mutableListOf<String>()
         for ((name, action) in listOf<Pair<String, () -> Unit>>(
             "tile states" to ::installTileStates,
@@ -162,8 +160,60 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
                 }
             },
         )) runCatching(action).onSuccess { r.info("QS appearance installed: $name") }
-            .onFailure { failures += name; fallback(name, it) }
+            .onFailure { error ->
+                val absent = error.absentTarget()
+                if (absent != null) {
+                    // The OEM class, method or field does not exist on this ROM. Components are
+                    // independent, so the missing one is skipped and the rest stay installed.
+                    r.info("QS appearance skipped: $name (${absent.javaClass.simpleName}: ${absent.message})")
+                } else {
+                    failures += name
+                    fallback(name, error)
+                }
+            }
         check(failures.isEmpty()) { "QS appearance components unavailable: ${failures.joinToString()}" }
+    }
+
+    /*
+     * ColorOS 17 maps tile state through TileViewFlag attrs. ColorOS 15 ships neither that class
+     * nor those attrs: the state is QSTile.State.state (1 inactive, 2 active, 101 inoperable,
+     * any other value unavailable) and the tile model already carries it.
+     */
+    private fun resolveTileFlagAttrs() {
+        val resolved = runCatching {
+            val flag = r.type("com.oplus.systemui.qs.base.res.model.TileViewFlag")
+            val attr = flag.getDeclaredMethod("getAttr")
+            fun value(name: String) = attr.invoke(flag.getDeclaredField(name).get(null)) as Int
+            intArrayOf(value("Active"), value("Unavailable"), value("Inoperable"))
+        }.getOrNull()
+        if (resolved != null) {
+            activeAttr = resolved[0]
+            unavailableAttr = resolved[1]
+            inoperableAttr = resolved[2]
+            nativeTileFlags = true
+            return
+        }
+        // View state resource ids are positive, so these values never occur in a Drawable state
+        // array: the attr comparisons below cannot match, and readers fall back to the tile model.
+        activeAttr = Int.MIN_VALUE
+        unavailableAttr = Int.MIN_VALUE + 1
+        inoperableAttr = Int.MIN_VALUE + 2
+        nativeTileFlags = false
+        r.info("QS appearance: TileViewFlag absent, tile state read from QSTile.State")
+    }
+
+    /** The missing class, method or field when a failure only reflects what this ROM ships. */
+    private fun Throwable.absentTarget(): Throwable? {
+        var current: Throwable? = this
+        repeat(16) {
+            val candidate = current ?: return null
+            when (candidate) {
+                is ClassNotFoundException, is NoClassDefFoundError, is TypeNotPresentException,
+                is NoSuchMethodException, is NoSuchFieldException -> return candidate
+            }
+            current = candidate.cause
+        }
+        return null
     }
 
     private fun fallback(part: String, error: Throwable) {
@@ -188,15 +238,26 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             val fullName = "${name}_$mode"
             return checkNotNull(namedColor(fullName)) { "System color role unavailable: android:color/$fullName" }
         }
+        fun optionalRole(name: String): Int? = namedColor("${name}_$mode")
+        // ColorOS 17 publishes the surface-effect roles; ColorOS 15 stops at surface_container,
+        // so the same container ladder stands in for SE0/SE1/SE2.
         fun effect(level: Int): Int {
-            return namedColor("customColorSurfaceEffect$level") ?: role("system_surface_effect_$level")
+            val fallback = when (level) {
+                0 -> "system_surface_container"
+                1 -> "system_surface_container_low"
+                else -> "system_surface_container_lowest"
+            }
+            return namedColor("customColorSurfaceEffect$level")
+                ?: optionalRole("system_surface_effect_$level")
+                ?: optionalRole(fallback)
+                ?: role(fallback)
         }
         // Read the framework overlay output. Do not reconstruct a scheme from an accent swatch
         // or choose a ColorSpec: system style, contrast and generation version are already applied.
         // Reference: Android 17 TileDefaults uses SE1 for inactive cards/tiles and SE2
         // for an inactive dual-target icon circle. BlurPanelColors composites the panel
         // scrim over shade_panel_bg_color; its selectors already contain their native alpha.
-        val panelBg = namedColor("shade_panel_bg_color") ?: effect(0)
+        val panelBg = namedColor("shade_panel_bg_color") ?: optionalRole("system_surface_container") ?: effect(0)
         val panelScrim = namedColor("shade_panel_scrim") ?: namedColor("shade_panel_scrim_color")
         val basePanel = if (panelScrim != null) ColorUtils.compositeColors(panelScrim, panelBg) else panelBg
         val primary = role("system_primary")
@@ -258,10 +319,10 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
     private fun installTileStates() {
         val normal = r.type("com.oplus.systemui.qs.base.tile.OplusQSTileBaseView")
         val normalState = r.field(normal, "mTempState")
-        val resize = r.type("com.oplus.systemui.plugins.qs.customize.view.tile.OplusQSResizeableTileView")
-        val resizeState = r.field(resize, "tileState")
-        val sliderTile = r.type("com.oplus.systemui.qs.slider.detail.widget.QsDetailTileBaseView")
-        val sliderState = r.field(sliderTile, "state")
+        val resize = runCatching { r.type("com.oplus.systemui.plugins.qs.customize.view.tile.OplusQSResizeableTileView") }.getOrNull()
+        val resizeState = resize?.let { runCatching { r.field(it, "tileState") }.getOrNull() }
+        val sliderTile = runCatching { r.type("com.oplus.systemui.qs.slider.detail.widget.QsDetailTileBaseView") }.getOrNull()
+        val sliderState = sliderTile?.let { runCatching { r.field(it, "state") }.getOrNull() }
         val state = r.type("com.android.systemui.plugins.qs.QSTile\$State")
         val status = r.field(state, "state")
         val disabled = r.field(state, "disabledByPolicy")
@@ -275,8 +336,8 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
                     break
                 }
                 val source = when {
-                    sliderTile.isInstance(current) -> sliderState.get(current)
-                    resize.isInstance(current) -> resizeState.get(current)
+                    sliderTile?.isInstance(current) == true -> sliderState?.get(current)
+                    resize?.isInstance(current) == true -> resizeState?.get(current)
                     normal.isInstance(current) -> normalState.get(current)
                     else -> null
                 }
@@ -304,22 +365,36 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             val changed = record(normalOwner.get(chain.thisObject) as View, normalValue.get(chain.thisObject))
             chain.proceed().also { if (changed) requestRefresh() }
         }
-        val resizeUpdate = resize.getDeclaredMethod("access\$handleStateChanged", resize, state)
-        r.hook("qs-appearance:tile-state-commit:resize", resizeUpdate) { chain ->
-            // Publish the incoming render state before native color callbacks, then repaint cached
-            // backgrounds even when OEM drawable flags do not change (e.g. locked recorder 0 -> 1).
-            val changed = record(chain.getArg(0) as View, chain.getArg(1))
-            chain.proceed().also { if (changed) requestRefresh() }
+        if (!nativeTileFlags) {
+            // ColorOS 15 reads the tile state from the commit callback above. TileViewFlag is absent
+            // there, so the state -> drawable-state-array mapping below has no source.
+            r.module.deoptimize(normalRun)
+            return
         }
-        val sliderUpdate = sliderTile.getDeclaredMethod("access\$handleStateChanged", sliderTile, state)
-        r.hook("qs-appearance:tile-state-commit:slider-detail", sliderUpdate) { chain ->
-            val changed = record(chain.getArg(0) as View, chain.getArg(1))
-            chain.proceed().also { if (changed) requestRefresh() }
-        }
-        listOf(normalRun, resizeUpdate, sliderUpdate,
-            r.type("${resize.name}\$StateChangeRunnable").getDeclaredMethod("run"),
-            r.type("${sliderTile.name}\$StateChangeRunnable").getDeclaredMethod("run"))
-            .forEach { r.module.deoptimize(it) }
+        val deoptimize = mutableListOf(normalRun)
+        // The resizeable and slider-detail tile families are absent on ColorOS 15; each one now
+        // installs on its own so normal tiles keep the state they need.
+        if (resize != null) runCatching {
+            val update = resize.getDeclaredMethod("access\$handleStateChanged", resize, state)
+            r.hook("qs-appearance:tile-state-commit:resize", update) { chain ->
+                // Publish the incoming render state before native color callbacks, then repaint cached
+                // backgrounds even when OEM drawable flags do not change (e.g. locked recorder 0 -> 1).
+                val changed = record(chain.getArg(0) as View, chain.getArg(1))
+                chain.proceed().also { if (changed) requestRefresh() }
+            }
+            deoptimize += update
+            deoptimize += r.type(resize.name + "\$StateChangeRunnable").getDeclaredMethod("run")
+        }.onFailure { r.debug("QS appearance tile state commit skipped: " + it) }
+        if (sliderTile != null) runCatching {
+            val update = sliderTile.getDeclaredMethod("access\$handleStateChanged", sliderTile, state)
+            r.hook("qs-appearance:tile-state-commit:slider-detail", update) { chain ->
+                val changed = record(chain.getArg(0) as View, chain.getArg(1))
+                chain.proceed().also { if (changed) requestRefresh() }
+            }
+            deoptimize += update
+            deoptimize += r.type(sliderTile.name + "\$StateChangeRunnable").getDeclaredMethod("run")
+        }.onFailure { r.debug("QS appearance slider tile state commit skipped: " + it) }
+        deoptimize.forEach { r.module.deoptimize(it) }
     }
 
     private fun drawableView(drawable: Drawable): View? {
@@ -960,6 +1035,15 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
     }
 
     private fun stateColor(palette: Colors, states: IntArray, icon: Boolean): Int {
+        if (!nativeTileFlags) {
+            // Without TileViewFlag the array holds QSTile.State.state values.
+            val state = states.firstOrNull() ?: return if (icon) palette.onInactive else palette.inactive
+            return when {
+                QsAppearanceRules.unavailableTile(state, false, false) -> if (icon) palette.disabledIcon else palette.disabled
+                state == 2 -> if (icon) palette.onActive else palette.active
+                else -> if (icon) palette.onInactive else palette.inactive
+            }
+        }
         if (unavailableAttr in states || inoperableAttr in states) {
             return if (icon) palette.disabledIcon else palette.disabled
         }
@@ -997,14 +1081,23 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
         }
     }
 
+    /**
+     * Unavailable or inoperable tile. On ColorOS 17 this is carried by the drawable state attrs;
+     * on ColorOS 15 the tile view holds the state code, so a view without one reports available.
+     */
+    private fun nativeUnavailable(states: IntArray, view: View? = null): Boolean {
+        if (nativeTileFlags) return unavailableAttr in states || inoperableAttr in states
+        val model = view?.let { tileStateOf?.invoke(it) } ?: return false
+        return QsAppearanceRules.unavailableTile(model.state, false, model.disabledByPolicy)
+    }
+
     private fun titleColor(view: View): Int {
         val palette = colors(view.context)
         tileStateOf?.invoke(view)?.let { state ->
             return if (QsAppearanceRules.unavailableTile(state.state, false, state.disabledByPolicy))
                 palette.disabledIcon else palette.onInactive
         }
-        val states = view.drawableState
-        return if (unavailableAttr in states || inoperableAttr in states) palette.disabledIcon else palette.onInactive
+        return if (nativeUnavailable(view.drawableState, view)) palette.disabledIcon else palette.onInactive
     }
 
     private fun installTitles() {
@@ -1804,21 +1897,28 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
     }
 
     private fun installIcons() {
-        val type = r.type("com.oplus.systemui.qs.base.res.model.TileIconColorState")
-        val states = r.field(type, "states")
-        val getter = type.getDeclaredMethod("getColorStateList", Int::class.javaObjectType)
-        r.hook("qs-appearance:icon-state", getter) { chain ->
-            val native = chain.proceed()
-            val ctx = iconContext.get()
-            if (!r.enabled(key) || ctx == null) return@hook native
-            runCatching {
-                val palette = colors(ctx)
-                @Suppress("UNCHECKED_CAST")
-                val specs = states.get(chain.thisObject) as Array<IntArray>
-                ColorStateList(specs, specs.map { stateColor(palette, it, true) }.toIntArray())
-            }.getOrElse { fallback("icon roles", it); native }
+        // The state-keyed color list that TileIconColorState serves on ColorOS 17 does not exist
+        // on ColorOS 15. Tile icon colors there come from the proxy hooks below.
+        runCatching {
+            val type = r.type("com.oplus.systemui.qs.base.res.model.TileIconColorState")
+            val states = r.field(type, "states")
+            val getter = type.getDeclaredMethod("getColorStateList", Int::class.javaObjectType)
+            r.hook("qs-appearance:icon-state", getter) { chain ->
+                val native = chain.proceed()
+                val ctx = iconContext.get()
+                if (!r.enabled(key) || ctx == null) return@hook native
+                runCatching {
+                    val palette = colors(ctx)
+                    @Suppress("UNCHECKED_CAST")
+                    val specs = states.get(chain.thisObject) as Array<IntArray>
+                    ColorStateList(specs, specs.map { stateColor(palette, it, true) }.toIntArray())
+                }.getOrElse { fallback("icon roles", it); native }
+            }
+            r.module.deoptimize(getter)
+        }.onFailure { absent ->
+            if (absent.absentTarget() == null) throw absent
+            r.info("QS appearance: TileIconColorState absent, tile icon colors use the icon view proxy")
         }
-        r.module.deoptimize(getter)
         for ((name, methodName) in listOf(
             "com.oplus.systemui.qs.tileimpl.OplusQSIconViewImpl" to "onIconTintUpdate",
             "com.oplus.systemui.plugins.qs.customize.view.tile.OplusQSIconView" to "onIconTintUpdate",
@@ -1837,6 +1937,13 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
                 }
             }
             r.module.deoptimize(method)
+        }
+        // ColorOS 15 ships neither QSIconViewProxy nor QSLottieAnimationView. The icon-state and
+        // icon-scope hooks above still apply there; the rest of the tinting needs those classes.
+        if (runCatching { r.type("com.oplus.systemui.qs.base.res.widget.QSIconViewProxy") }.isFailure ||
+            runCatching { r.type("com.oplus.systemui.qs.base.tile.QSLottieAnimationView") }.isFailure) {
+            r.info("QS appearance: icon proxy absent, tile icon tint hooks beyond the icon view are skipped")
+            return
         }
         val lottie = r.type("com.oplus.systemui.qs.base.tile.QSLottieAnimationView")
         val keyPath = r.type("com.airbnb.lottie.model.KeyPath")
@@ -1874,21 +1981,25 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             synchronized(iconHosts) { iconHosts[view] = WeakReference(host) }
             synchronized(iconProxies) { iconProxies[view] = WeakReference(owner) }
         }
-        val flags = r.type("com.oplus.systemui.qs.base.res.model.TileViewFlag")
-        val getFlag = flags.getDeclaredMethod("getFlag")
-        val roleSpecs = listOf("Inoperable", "Unavailable", "Active", "Inactive")
-            .map { getFlag.invoke(flags.getDeclaredField(it).get(null)) as IntArray }.toTypedArray() + arrayOf(intArrayOf())
-        val setTint = proxy.getDeclaredMethod("setTintList", ColorStateList::class.java)
-        r.hook("qs-appearance:icon-tint-source", setTint) { chain ->
-            val owner = requireNotNull(chain.thisObject)
-            val host = iconHost.get(owner) as View
-            if (!r.enabled(key) || !isTile(host)) return@hook chain.proceed()
-            val view = getImage.invoke(owner) as ImageView
-            rememberProxy(owner, view, host)
-            val palette = colors(view.context)
-            val tint = ColorStateList(roleSpecs, intArrayOf(palette.disabledIcon, palette.disabledIcon,
-                palette.onActive, palette.onInactive, palette.onInactive))
-            chain.proceed(arrayOf(tint))
+        val flags = runCatching { r.type("com.oplus.systemui.qs.base.res.model.TileViewFlag") }.getOrNull()
+        val roleSpecs = flags?.let { type ->
+            val getFlag = type.getDeclaredMethod("getFlag")
+            listOf("Inoperable", "Unavailable", "Active", "Inactive")
+                .map { getFlag.invoke(type.getDeclaredField(it).get(null)) as IntArray }.toTypedArray() + arrayOf(intArrayOf())
+        }
+        if (roleSpecs != null) {
+            val setTint = proxy.getDeclaredMethod("setTintList", ColorStateList::class.java)
+            r.hook("qs-appearance:icon-tint-source", setTint) { chain ->
+                val owner = requireNotNull(chain.thisObject)
+                val host = iconHost.get(owner) as View
+                if (!r.enabled(key) || !isTile(host)) return@hook chain.proceed()
+                val view = getImage.invoke(owner) as ImageView
+                rememberProxy(owner, view, host)
+                val palette = colors(view.context)
+                val tint = ColorStateList(roleSpecs, intArrayOf(palette.disabledIcon, palette.disabledIcon,
+                    palette.onActive, palette.onInactive, palette.onInactive))
+                chain.proceed(arrayOf(tint))
+            }
         }
         val jsonTint = lottie.getDeclaredMethod("tintLottieJsonColor", Int::class.javaObjectType, Int::class.javaObjectType)
         r.hook("qs-appearance:lottie-system-roles", jsonTint) { chain ->
@@ -2053,9 +2164,11 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             val model = tileStateOf?.invoke(target.colorOwner ?: view)
             val state = QsAppearanceRules.resolvedTileState(model?.state, target.stateProxy?.let { stateField.getInt(it) })
             val unavailable = QsAppearanceRules.unavailableTile(state,
-                unavailableAttr in drawable.state || inoperableAttr in drawable.state,
+                nativeUnavailable(drawable.state, target.colorOwner ?: view),
                 model?.disabledByPolicy ?: (target.stateProxy?.let { policyField.getBoolean(it) } == true))
-            val active = QsAppearanceRules.activeTile(state, activeAttr in drawable.state)
+            // Without TileViewFlag attrs the drawable state carries no tile state; an unresolved
+            // tile then stays inactive rather than being painted as an active primary surface.
+            val active = QsAppearanceRules.activeTile(state, nativeTileFlags && activeAttr in drawable.state)
             val shape = getPath.invoke(drawable) as Path
             val shapeKind = target.shape ?: when (target.kind) {
                 SurfaceKind.Tile -> QsShapeRules.Kind.Single
