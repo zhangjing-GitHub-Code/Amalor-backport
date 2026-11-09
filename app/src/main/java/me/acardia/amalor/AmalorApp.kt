@@ -514,6 +514,8 @@ private fun restartWeType(): Boolean = runCatching {
     Runtime.getRuntime().exec(arrayOf("su", "-c", "killall ${WeTypeOptions.PACKAGE_NAME} ${WeTypeOptions.IME_PROCESS}")).waitFor() == 0
 }.getOrDefault(false)
 
+private const val MODULE_PATH = "/data/adb/modules/material_you_for_coloros"
+
 private fun restartSystemUi(): Boolean = runCatching {
     Runtime.getRuntime().exec(arrayOf("su", "-c", "killall com.android.systemui")).waitFor() == 0
 }.getOrDefault(false)
@@ -592,12 +594,12 @@ private data class RootState(
                     }
             }.getOrNull()
 
-            val modulePath = "/data/adb/modules/material_you_for_coloros"
+            val modulePath = MODULE_PATH
             val moduleInstalled = runCatching {
                 Runtime.getRuntime().exec(arrayOf("su", "-c", "test -d $modulePath")).waitFor() == 0
             }.getOrDefault(false)
             val version = runCatching {
-                Runtime.getRuntime().exec(arrayOf("su", "-c", "cat /data/adb/modules/material_you_for_coloros/module.prop"))
+                Runtime.getRuntime().exec(arrayOf("su", "-c", "cat $MODULE_PATH/module.prop"))
                     .inputStream.bufferedReader().use { reader ->
                         reader.readLines()
                             .firstOrNull { it.startsWith("version=") }
@@ -605,13 +607,21 @@ private data class RootState(
                             ?.takeIf { it.isNotBlank() }
                     }
             }.getOrNull()
-            return RootState(authorized, moduleInstalled, version, Privilege.ROOT, source, deviceName, readModuleConfig())
+            return RootState(
+                authorized = authorized,
+                moduleInstalled = moduleInstalled,
+                moduleVersion = version,
+                privilege = Privilege.ROOT,
+                source = source,
+                deviceName = deviceName,
+                config = readModuleConfig(),
+            )
         }
     }
 }
 
 private fun readModuleConfig(): ModuleConfig = runCatching {
-    Runtime.getRuntime().exec(arrayOf("su", "-c", "cat /data/adb/modules/material_you_for_coloros/config.conf"))
+    Runtime.getRuntime().exec(arrayOf("su", "-c", "cat $MODULE_PATH/config.conf"))
         .inputStream.bufferedReader().use { reader ->
             val values = reader.readLines().mapNotNull { it.substringAfter('=', "").trim().trim('"').toIntOrNull() }
             values.firstOrNull()?.let(::ModuleConfig) ?: ModuleConfig.default

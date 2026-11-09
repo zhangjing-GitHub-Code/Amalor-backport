@@ -16,14 +16,28 @@ import me.acardia.amalor.xposed.HookLog;
 
 /** Normalize both ColorOS horizontal battery progress paths after native updates. */
 public final class OplusHorizontalBatteryHook {
+    private static final String BASE =
+            "com.oplus.systemui.statusbar.pipeline.battery.ui.drawable.BatteryBarDrawableBase";
+    private static final String HORIZONTAL =
+            "com.oplus.systemui.statusbar.pipeline.battery.ui.drawable.HorizontalBatteryContentDrawable";
+
     private OplusHorizontalBatteryHook() {}
+
+    /** Both drawables exist on ColorOS 15 and 17; other ROMs do not ship the pipeline. */
+    public static boolean isAvailable(ClassLoader loader) {
+        try {
+            Class.forName(BASE, false, loader);
+            Class.forName(HORIZONTAL, false, loader);
+            return true;
+        } catch (Throwable absent) {
+            return false;
+        }
+    }
 
     public static void install(XposedModule module, ClassLoader loader) throws ReflectiveOperationException {
         SharedPreferences preferences = module.getRemotePreferences(NetworkTypeOptions.GROUP);
-        Class<?> base = loader.loadClass(
-                "com.oplus.systemui.statusbar.pipeline.battery.ui.drawable.BatteryBarDrawableBase");
-        Class<?> horizontal = loader.loadClass(
-                "com.oplus.systemui.statusbar.pipeline.battery.ui.drawable.HorizontalBatteryContentDrawable");
+        Class<?> base = loader.loadClass(BASE);
+        Class<?> horizontal = loader.loadClass(HORIZONTAL);
         Method batteryLevel = horizontal.getMethod("getBatteryLevel");
         Field inside = base.getDeclaredField("insideDrawable");
         Field outside = horizontal.getDeclaredField("progressDrawable");

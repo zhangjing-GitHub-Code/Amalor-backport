@@ -37,11 +37,24 @@ import me.acardia.amalor.xposed.HookLog;
 
 /** Appearance only: retain PackageUpdateActivity's icon, message and update lifecycle. */
 public final class PackageUpdateHook {
+    private static final String ACTIVITY = "com.android.wm.shell.packageupdate.PackageUpdateActivity";
+
+    /**
+     * The activity is absent on ColorOS 15, where this feature does not exist. Callers use this
+     * to skip installation rather than fail. */
+    public static boolean isAvailable(ClassLoader loader) {
+        try {
+            Class.forName(ACTIVITY, false, loader);
+            return true;
+        } catch (Throwable absent) {
+            return false;
+        }
+    }
     private static final int INDICATOR_SIZE_DP = 144;
     private static final int ICON_SIZE_DP = 40;
 
     public static void install(XposedModule module, ClassLoader loader) throws ReflectiveOperationException {
-        Class<?> activity = loader.loadClass("com.android.wm.shell.packageupdate.PackageUpdateActivity");
+        Class<?> activity = loader.loadClass(ACTIVITY);
         Class<?> modifier = loader.loadClass("androidx.compose.ui.Modifier");
         Class<?> composer = loader.loadClass("androidx.compose.runtime.Composer");
         Class<?> function = loader.loadClass("kotlin.jvm.functions.Function2");
