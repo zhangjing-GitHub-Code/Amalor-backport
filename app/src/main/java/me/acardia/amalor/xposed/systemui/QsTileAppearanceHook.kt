@@ -2000,6 +2000,7 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
                     palette.onActive, palette.onInactive, palette.onInactive))
                 chain.proceed(arrayOf(tint))
             }
+            r.module.deoptimize(setTint)
         }
         val jsonTint = lottie.getDeclaredMethod("tintLottieJsonColor", Int::class.javaObjectType, Int::class.javaObjectType)
         r.hook("qs-appearance:lottie-system-roles", jsonTint) { chain ->
@@ -2034,7 +2035,6 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             }
         }
         r.module.deoptimize(update)
-        r.module.deoptimize(setTint)
         r.module.deoptimize(lottie.getDeclaredMethod("setTintColorfulConfig", String::class.java,
             r.type("com.oplus.systemui.qs.base.tile.QSLottieAnimationView\$ColorfulConfig")))
         r.module.deoptimize(r.type("com.oplus.systemui.qs.base.tile.QSLottieAnimationView\$1")
