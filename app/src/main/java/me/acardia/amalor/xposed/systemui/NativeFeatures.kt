@@ -19,6 +19,8 @@ internal class NativeFeatures(val module: XposedModule, val loader: ClassLoader)
     // but one process uses one material mode; install/render decisions share this startup value.
     private val materialAtStartup = preferences.getBoolean(NativeFeatureOptions.QS_TILE_NATIVE_APPEARANCE, false)
     private val installed = mutableSetOf<String>()
+    private val availability: SharedPreferences =
+        module.getRemotePreferences(NativeFeatureOptions.AVAILABILITY_GROUP)
 
     fun enabled(key: String) = if (key == NativeFeatureOptions.QS_TILE_NATIVE_APPEARANCE) materialAtStartup else flags.get(key)
 
@@ -26,8 +28,20 @@ internal class NativeFeatures(val module: XposedModule, val loader: ClassLoader)
 
     fun install(key: String, active: Boolean, action: () -> Unit) {
         if (!active || key in installed) return
-        runCatching(action).onSuccess { installed += key; info("Installed $key") }
-            .onFailure { HookLog.write(module, Log.ERROR, "Amalor", "Native feature unavailable: $key", it) }
+        runCatching(action).onSuccess { installed += key; report(key, true); info("Installed $key") }
+            .onFailure {
+                report(key, false)
+                HookLog.write(module, Log.ERROR, "Amalor", "Native feature unavailable: $key", it)
+            }
+    }
+
+    /** Publish install results so the app can disable switches this ROM cannot support. */
+    private fun report(key: String, available: Boolean) {
+        runCatching {
+            availability.edit()
+                .putBoolean(NativeFeatureOptions.availabilityKey(key), available)
+                .apply()
+        }
     }
 
     fun hook(key: String, target: Executable, action: (XposedInterface.Chain) -> Any?) {

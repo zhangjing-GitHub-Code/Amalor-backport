@@ -10,5 +10,17 @@ public final class NativeFeatureOptions {
     public static final String HIDE_NON_DATA_SIM = "status_bar_hide_non_data_sim";
     public static final String[] KEYS = {POWER_MENU, BACK_PANEL, BACK_PREDICTIVE_ANIMATION, VOLUME_PANEL, CLIPBOARD, QS_TILE_NATIVE_APPEARANCE, HIDE_NON_DATA_SIM};
 
+    /**
+     * Written by the module from inside SystemUI once installation finishes, read by the app.
+     * A key is present and true only when its hooks actually installed, so the app can tell
+     * "supported but switched off" from "not available on this ROM".
+     */
+    public static final String AVAILABILITY_GROUP = "native_feature_availability";
+    public static final String AVAILABILITY_SUFFIX = "_available";
+
+    public static String availabilityKey(String feature) {
+        return feature + AVAILABILITY_SUFFIX;
+    }
+
     private NativeFeatureOptions() {}
 }
