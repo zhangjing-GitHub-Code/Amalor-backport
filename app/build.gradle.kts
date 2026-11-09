@@ -29,8 +29,8 @@ android {
 
     defaultConfig {
         applicationId = "me.acardia.amalor"
-        minSdk = 37
-        targetSdk = 37
+        minSdk = 35
+        targetSdk = 35
         versionCode = appVersionCode
         versionName = appVersionName
     }
@@ -101,7 +101,7 @@ dependencies {
     implementation("androidx.core:core-splashscreen:1.2.0") {
         exclude(group = "androidx.appcompat", module = "appcompat-resources")
     }
-    implementation("top.yukonga.miuix.kmp:miuix-nav-android:0.9.4-103b737b-SNAPSHOT")
+    implementation("top.yukonga.miuix.kmp:miuix-nav-android:0.9.4")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3:1.5.0-beta01")
