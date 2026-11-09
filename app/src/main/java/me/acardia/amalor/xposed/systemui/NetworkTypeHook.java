@@ -26,8 +26,8 @@ import io.github.libxposed.api.XposedModule;
  * <p>ColorOS 17 uses a Compose pipeline (layout strategy factories under
  * {@code statusbar.pipeline.shared.ui.composable}); ColorOS 15 uses a View pipeline
  * ({@code OplusMobileViewBinderFactory} selecting a {@code *StatusBarMobileViewBinder}).
- * Both are attempted, and whichever exists wins. Missing classes are not an error: the
- * Android 17 targets simply do not exist on 15 and vice versa.
+ * Both are probed; the first one present is installed. A missing class is normal, since each
+ * release ships only one of the two pipelines.
  */
 public final class NetworkTypeHook {
     private final XposedModule module;
@@ -98,7 +98,7 @@ public final class NetworkTypeHook {
         }
     }
 
-    /** ColorOS 17 first, then ColorOS 15. Both are cheap existence checks. */
+    /** Probes the ColorOS 17 pipeline first, then the ColorOS 15 one. */
     private void installLayout(ClassLoader loader) throws ReflectiveOperationException {
         if (hasClass(loader, COMPOSABLE + "OplusStackedMobileIconLayoutStrategyFactory")) {
             installStackedStrategy(loader);
@@ -143,11 +143,10 @@ public final class NetworkTypeHook {
      * ColorOS 15: pick the BigType binder instead of the plain one.
      *
      * <p>{@code getMobileViewBinder()} returns one of four binders based on
-     * {@code CustomizeFeatureOption} flags. Hooking the getter is the dependable path: ART may
-     * inline it into the signal pipeline, so its callers are deoptimized first. Setting
-     * {@code sIsShowBig5G} as well is only a safety net, because
+     * {@code CustomizeFeatureOption} flags. ART may inline the getter into the signal pipeline,
+     * so its callers are deoptimized before hooking. {@code sIsShowBig5G} is also set, but
      * {@code CustomizeFeatureOption.loadAppFeature()} reassigns that field at runtime and can
-     * overwrite it.
+     * overwrite it, so the flag alone is not reliable.
      */
     private void installBigTypeViewBinder(ClassLoader loader) throws ReflectiveOperationException {
         Class<?> factory = loader.loadClass(VIEW_15 + "OplusMobileViewBinderFactory");
@@ -169,7 +168,7 @@ public final class NetworkTypeHook {
                 });
     }
 
-    /** Secondary path: flip the feature flag the factory reads, in case the hook is missed. */
+    /** Sets the feature flag the factory reads; the getter hook above remains the primary path. */
     private void forceBig5GFlag(ClassLoader loader) {
         try {
             Class<?> options = loader.loadClass("com.oplusos.systemui.common.feature.CustomizeFeatureOption");
@@ -268,7 +267,7 @@ public final class NetworkTypeHook {
         return out.toByteArray();
     }
 
-    /** The factory stores the binder in a {@code dagger.Lazy}; unwrap it when present. */
+    /** The factory field may hold a {@code dagger.Lazy}; returns the underlying binder. */
     private static Object unwrapLazy(Object stored) {
         if (stored == null) return null;
         try {
@@ -292,7 +291,7 @@ public final class NetworkTypeHook {
         }
     }
 
-    /** Best effort: a missing target means the caller was never inlined, which is fine. */
+    /** A missing target is not an error: it only means the caller was never inlined. */
     private void deoptimizeNamedMethods(ClassLoader loader, String simpleOrFullName, String methodName) {
         String className = simpleOrFullName.contains(".") ? simpleOrFullName : COMPOSABLE + simpleOrFullName;
         Class<?> type;

@@ -40,9 +40,8 @@ public final class PackageUpdateHook {
     private static final String ACTIVITY = "com.android.wm.shell.packageupdate.PackageUpdateActivity";
 
     /**
-     * ColorOS 15 has no {@code PackageUpdateActivity} at all, so the whole feature is absent
-     * there. Returning quietly keeps the other hooks installing instead of logging a failure.
-     */
+     * The activity is absent on ColorOS 15, where this feature does not exist. Callers use this
+     * to skip installation rather than fail. */
     public static boolean isAvailable(ClassLoader loader) {
         try {
             Class.forName(ACTIVITY, false, loader);

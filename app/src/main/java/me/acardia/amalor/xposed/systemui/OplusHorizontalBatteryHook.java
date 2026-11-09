@@ -23,10 +23,7 @@ public final class OplusHorizontalBatteryHook {
 
     private OplusHorizontalBatteryHook() {}
 
-    /**
-     * Present on both ColorOS 15 and 17; guarded so a ROM without the Oplus battery pipeline
-     * disables the feature instead of failing the whole module install.
-     */
+    /** Both drawables exist on ColorOS 15 and 17; other ROMs do not ship the pipeline. */
     public static boolean isAvailable(ClassLoader loader) {
         try {
             Class.forName(BASE, false, loader);

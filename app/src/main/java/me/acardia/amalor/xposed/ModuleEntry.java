@@ -132,7 +132,7 @@ public final class ModuleEntry extends XposedModule {
             HookLog.write(this, Log.ERROR, "Amalor", "native feature settings unavailable", error);
         }
         if (!packageUpdateInstalled) {
-            // ColorOS 15 has no PackageUpdateActivity; skip it instead of retrying forever.
+            // Absent on ColorOS 15; mark as done so it is not retried on every callback.
             if (!PackageUpdateHook.isAvailable(loader)) {
                 packageUpdateInstalled = true;
                 HookLog.write(this, Log.INFO, "Amalor", "package update appearance is absent on this build");
