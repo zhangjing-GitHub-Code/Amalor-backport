@@ -193,7 +193,7 @@ internal class NotificationAppearanceHook(
         )) {
             if (!groupedAdapters && (name == "groups" || name == "group transitions")) {
                 r.info("Notification appearance skipped: $name")
-                return@forEach
+                continue
             }
             runCatching(install).onFailure { error ->
                 // A missing optional OEM adapter must not suppress the handle and all later hooks.
