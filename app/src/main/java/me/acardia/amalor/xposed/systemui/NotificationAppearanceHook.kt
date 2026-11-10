@@ -22,8 +22,6 @@ import android.widget.TextView
 import androidx.core.graphics.ColorUtils
 import me.acardia.amalor.NativeFeatureOptions
 import java.lang.ref.WeakReference
-import java.lang.reflect.NoSuchFieldException
-import java.lang.reflect.NoSuchMethodException
 import java.util.WeakHashMap
 import kotlin.math.roundToInt
 
