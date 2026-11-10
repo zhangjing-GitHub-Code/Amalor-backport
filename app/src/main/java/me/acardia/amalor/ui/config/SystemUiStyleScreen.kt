@@ -38,7 +38,11 @@ fun SystemUiStyleScreen(
     var showRestartDialog by remember { mutableStateOf(false) }
     val interactions = remember { List(2) { MutableInteractionSource() } }
     fun selectMaterial(enabled: Boolean) {
-        if (enabled != materialEnabled) onMaterialChange(enabled)
+        if (enabled != materialEnabled) {
+            onMaterialChange(enabled)
+            // The mode is read once when SystemUI starts, so the change only applies after a restart.
+            showRestartDialog = true
+        }
     }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
     Scaffold(

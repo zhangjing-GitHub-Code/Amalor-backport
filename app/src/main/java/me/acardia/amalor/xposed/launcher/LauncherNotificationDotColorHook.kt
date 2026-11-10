@@ -79,8 +79,10 @@ internal class LauncherNotificationDotColorHook(private val r: LauncherIconRunti
             }
         }
         r.install("dot-color:number", key) {
-            scoped("dot-color:draw-number", method(rendererName, "drawNumber", 5)) { chain, restores ->
-                val colors = drawingColors(chain.getArg(4)) ?: return@scoped
+            val drawNumber = method(rendererName, "drawNumber", 5)
+            val paramsIndex = drawNumber.drawParamsIndex()
+            scoped("dot-color:draw-number", drawNumber) { chain, restores ->
+                val colors = drawingColors(chain.getArg(paramsIndex)) ?: return@scoped
                 val renderer = requireNotNull(chain.getThisObject())
                 tint(restores, numberPill(renderer), colors.background)
                 textColor(restores, renderer, colors.foreground)
@@ -95,10 +97,13 @@ internal class LauncherNotificationDotColorHook(private val r: LauncherIconRunti
                 IconSource(notifiedBitmap(host, items), host)
             }
         }
-        r.install("dot-color:shortcut-container", key) {
-            sourceScope("dot-color:shortcut-container", method("com.android.launcher3.viewcontainer.ShortcutContainer", "dispatchDraw", 1)) { chain ->
-                val host = chain.getThisObject() as View
-                IconSource(hostBitmap(host), host)
+        // ShortcutContainer is absent on ColorOS 15; probe it so the absence is not an error.
+        if (runCatching { r.type("com.android.launcher3.viewcontainer.ShortcutContainer") }.isSuccess) {
+            r.install("dot-color:shortcut-container", key) {
+                sourceScope("dot-color:shortcut-container", method("com.android.launcher3.viewcontainer.ShortcutContainer", "dispatchDraw", 1)) { chain ->
+                    val host = chain.getThisObject() as View
+                    IconSource(hostBitmap(host), host)
+                }
             }
         }
         r.install("dot-color:animated-caller", key) {
@@ -108,19 +113,34 @@ internal class LauncherNotificationDotColorHook(private val r: LauncherIconRunti
         }
     }
 
+    /**
+     * Resolve an overload by name. ColorOS 15 ships the same renderers with one
+     * fewer parameter than 17, so an exact count is preferred and the closest
+     * one is used otherwise.
+     */
     private fun method(owner: String, name: String, count: Int) =
-        r.type(owner).declaredMethods.single { it.name == name && it.parameterCount == count }
+        r.type(owner).declaredMethods
+            .filter { it.name == name && it.parameterCount > 0 }
+            .minByOrNull { kotlin.math.abs(it.parameterCount - count) }
+            ?: throw NoSuchMethodException("$owner#$name/$count")
+
+    /** Position of the DotRenderer.DrawParams argument, which moved between releases. */
+    private fun Method.drawParamsIndex(): Int =
+        parameterTypes.indexOfFirst { it.name.endsWith("DotRenderer\$DrawParams") }
 
     private fun installBigFolder() {
         val manager = r.type("com.android.launcher3.folder.big.BigFolderPreviewItemManager")
-        val drawDot = manager.declaredMethods.single {
-            it.name == "drawDotIfNecessary" && it.parameterCount == 2 && it.parameterTypes[1].name.endsWith("PreviewItemDrawingParams")
-        }
-        sourceScope("dot-color:big-folder-source", drawDot) { chain ->
-            val params = chain.getArg(1) ?: return@sourceScope null
-            val item = r.get(params, "item")
-            val host = r.get(requireNotNull(chain.getThisObject()), "mIcon") as? View
-            IconSource(itemBitmap(item), host)
+        // The source-side dot hook needs the preview item shape this ROM ships.
+        manager.declaredMethods.firstOrNull {
+            it.name == "drawDotIfNecessary" && it.parameterCount == 2 &&
+                it.parameterTypes[1].name.endsWith("PreviewItemDrawingParams")
+        }?.let { drawDot ->
+            sourceScope("dot-color:big-folder-source", drawDot) { chain ->
+                val params = chain.getArg(1) ?: return@sourceScope null
+                val item = r.get(params, "item")
+                val host = r.get(requireNotNull(chain.getThisObject()), "mIcon") as? View
+                IconSource(itemBitmap(item), host)
+            }
         }
         val owner = "com.android.launcher3.folder.big.BigFolderNumBadgeRender"
         scoped("dot-color:big-folder-draw", method(owner, "draw", 4)) { _, restores ->
