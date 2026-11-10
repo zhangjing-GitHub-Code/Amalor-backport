@@ -175,6 +175,11 @@ internal class NotificationAppearanceHook(
 
     fun install() {
         val failures = mutableListOf<String>()
+        // The grouped-notification adapters only ship on ColorOS 17. Probing once keeps both
+        // group components from logging a failure on every SystemUI start.
+        val groupedAdapters = runCatching {
+            r.type("com.oplus.systemui.notification.row.oplusgroup.OplusNotificationGroupExtImpl")
+        }.isSuccess
         for ((name, install) in listOf<Pair<String, () -> Unit>>(
             "backgrounds" to ::installBackgrounds,
             "content lifecycle" to ::installContent,
@@ -185,13 +190,19 @@ internal class NotificationAppearanceHook(
             "title shadows" to ::installTitleShadows,
             "spotlight" to ::installSpotlight,
             "optional material wrappers" to ::installMaterialWrappers,
-        )) runCatching(install).onFailure { error ->
-            // A missing optional OEM adapter must not suppress the handle and all later hooks.
-            if (error.absentClass()) {
+        )) {
+            if (!groupedAdapters && (name == "groups" || name == "group transitions")) {
                 r.info("Notification appearance skipped: $name")
-            } else {
-                r.error("Notification appearance $name unavailable", error.cause ?: error)
-                if (name == "backgrounds" || name == "content lifecycle") failures += name
+                return@forEach
+            }
+            runCatching(install).onFailure { error ->
+                // A missing optional OEM adapter must not suppress the handle and all later hooks.
+                if (error.absentClass()) {
+                    r.info("Notification appearance skipped: $name")
+                } else {
+                    r.error("Notification appearance $name unavailable", error.cause ?: error)
+                    if (name == "backgrounds" || name == "content lifecycle") failures += name
+                }
             }
         }
         check(failures.isEmpty()) { "Notification core unavailable: ${failures.joinToString()}" }
@@ -648,20 +659,24 @@ internal class NotificationAppearanceHook(
             }
             r.module.deoptimize(method)
         }
-        val collapse = r.type("com.oplus.systemui.notification.row.oplusgroup.OplusNotificationExpandGroupHeaderImageView")
-        for (method in collapse.declaredMethods.filter {
-            it.name in setOf("onAttachedToWindow", "onConfigurationChanged", "refreshMaterialBackground")
-        }) {
-            r.hook("notification-appearance:collapse-control:${method.name}", method) { chain ->
-                val view = chain.thisObject as View
-                chain.proceed().also {
-                    if (active(view)) {
-                        control(view, ControlKind.GroupButton, ownerOf(view) ?: view)
-                        register(view)
+        // The grouped-header collapse control is a ColorOS 17 class. The framework expand
+        // button above still applies on 15, so this part is optional.
+        runCatching {
+            val collapse = r.type("com.oplus.systemui.notification.row.oplusgroup.OplusNotificationExpandGroupHeaderImageView")
+            for (method in collapse.declaredMethods.filter {
+                it.name in setOf("onAttachedToWindow", "onConfigurationChanged", "refreshMaterialBackground")
+            }) {
+                r.hook("notification-appearance:collapse-control:${method.name}", method) { chain ->
+                    val view = chain.thisObject as View
+                    chain.proceed().also {
+                        if (active(view)) {
+                            control(view, ControlKind.GroupButton, ownerOf(view) ?: view)
+                            register(view)
+                        }
                     }
                 }
+                r.module.deoptimize(method)
             }
-            r.module.deoptimize(method)
         }
     }
 
