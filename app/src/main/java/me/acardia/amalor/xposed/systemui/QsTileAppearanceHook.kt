@@ -1229,52 +1229,71 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
     }
 
     private fun installControls() {
+        // Each control root is independent; a ROM that ships only some of them keeps the rest.
         for (name in listOf("com.oplus.systemui.qs.OplusQSFooterImpl",
             "com.oplus.systemui.separate.OplusQSSimpleHeader",
             "com.oplus.systemui.plugins.qs.quickentrance.ui.view.OplusQSQuickEntranceContainerView")) {
-            val type = r.type(name)
-            val constructor = type.getDeclaredConstructor(Context::class.java, AttributeSet::class.java)
+            val type = runCatching { r.type(name) }.getOrNull() ?: continue
+            val constructor = runCatching {
+                type.getDeclaredConstructor(Context::class.java, AttributeSet::class.java)
+            }.getOrNull() ?: continue
             r.hook("qs-appearance:control-root:$name", constructor) { chain ->
                 chain.proceed().also {
                     if (r.enabled(key)) watchDetailContent(chain.thisObject as View, detail = false)
                 }
             }
         }
-        val edit = r.type("com.oplus.systemui.plugins.qs.edittop.EditTopComponent")
-        val editButtons = listOf("addBtn", "saveBtnContainer", "qsSettingBtn").map { r.field(edit, it) }
-        val startEdit = edit.getDeclaredMethod("startComponent")
-        r.hook("qs-appearance:edit-top-buttons", startEdit) { chain ->
-            chain.proceed().also {
-                if (r.enabled(key)) for (field in editButtons) (field.get(chain.thisObject) as? View)?.let { button ->
-                    tintControls(button)
-                    watchDetailContent(button, detail = false)
+        val edit = runCatching { r.type("com.oplus.systemui.plugins.qs.edittop.EditTopComponent") }.getOrNull()
+        if (edit != null) {
+            val editButtons = listOf("addBtn", "saveBtnContainer", "qsSettingBtn")
+                .mapNotNull { runCatching { r.field(edit, it) }.getOrNull() }
+            val startEdit = runCatching { edit.getDeclaredMethod("startComponent") }.getOrNull()
+            if (startEdit != null) {
+                r.hook("qs-appearance:edit-top-buttons", startEdit) { chain ->
+                    chain.proceed().also {
+                        if (r.enabled(key)) for (field in editButtons) (field.get(chain.thisObject) as? View)?.let { button ->
+                            tintControls(button)
+                            watchDetailContent(button, detail = false)
+                        }
+                    }
+                }
+                r.module.deoptimize(startEdit)
+            }
+            runCatching { r.module.deoptimize(edit.getDeclaredMethod("onEnterEditMode", Boolean::class.javaPrimitiveType)) }
+        }
+        val adaptiveIcon = runCatching {
+            r.type("com.oplus.systemui.plugins.qs.util.QSColorUtil")
+                .getDeclaredMethod("adaptiveColor", ImageView::class.java, Drawable::class.java)
+        }.getOrNull()
+        if (adaptiveIcon != null) {
+            r.hook("qs-appearance:control-adaptive-icon", adaptiveIcon) { chain ->
+                chain.proceed().also {
+                    val view = chain.getArg(0) as ImageView
+                    if (r.enabled(key) && synchronized(controlBackgrounds) { controlBackgrounds.containsKey(view) })
+                        tintControls(view)
                 }
             }
+            r.module.deoptimize(adaptiveIcon)
         }
-        r.module.deoptimize(startEdit)
-        val adaptiveIcon = r.type("com.oplus.systemui.plugins.qs.util.QSColorUtil")
-            .getDeclaredMethod("adaptiveColor", ImageView::class.java, Drawable::class.java)
-        r.hook("qs-appearance:control-adaptive-icon", adaptiveIcon) { chain ->
-            chain.proceed().also {
-                val view = chain.getArg(0) as ImageView
-                if (r.enabled(key) && synchronized(controlBackgrounds) { controlBackgrounds.containsKey(view) })
-                    tintControls(view)
+        val icon = runCatching {
+            r.type("com.oplus.systemui.plugins.qs.customize.view.tile.OplusQSThreeStageLayout")
+                .getDeclaredMethod("getActiveIconColor", Boolean::class.javaPrimitiveType)
+        }.getOrNull()
+        if (icon != null) {
+            r.hook("qs-appearance:three-stage-icons", icon) { chain ->
+                if (!r.enabled(key)) return@hook chain.proceed()
+                val palette = colors((chain.thisObject as View).context)
+                if (chain.getArg(0) == true) palette.onActive else palette.onInactive
             }
+            r.module.deoptimize(icon)
         }
-        r.module.deoptimize(adaptiveIcon)
-        r.module.deoptimize(edit.getDeclaredMethod("onEnterEditMode", Boolean::class.javaPrimitiveType))
-        val three = r.type("com.oplus.systemui.plugins.qs.customize.view.tile.OplusQSThreeStageLayout")
-        val icon = three.getDeclaredMethod("getActiveIconColor", Boolean::class.javaPrimitiveType)
-        r.hook("qs-appearance:three-stage-icons", icon) { chain ->
-            if (!r.enabled(key)) return@hook chain.proceed()
-            val palette = colors((chain.thisObject as View).context)
-            if (chain.getArg(0) == true) palette.onActive else palette.onInactive
-        }
-        r.module.deoptimize(icon)
-        val switch = r.type("com.coui.appcompat.couiswitch.COUISwitch")
-        val switchColors = listOf("setBarCheckedColor", "setBarUnCheckedColor", "setBarCheckedDisabledColor",
-            "setBarUncheckedDisabledColor", "setOuterCircleColor", "setOuterCircleUncheckedColor", "setInnerCircleColor", "setBarColor")
-            .map { switch.getDeclaredMethod(it, Int::class.javaPrimitiveType).apply { isAccessible = true } }
+        val switch = runCatching { r.type("com.coui.appcompat.couiswitch.COUISwitch") }.getOrNull()
+        val switchColors = switch?.let { type ->
+            listOf("setBarCheckedColor", "setBarUnCheckedColor", "setBarCheckedDisabledColor",
+                "setBarUncheckedDisabledColor", "setOuterCircleColor", "setOuterCircleUncheckedColor",
+                "setInnerCircleColor", "setBarColor")
+                .mapNotNull { runCatching { type.getDeclaredMethod(it, Int::class.javaPrimitiveType).apply { isAccessible = true } }.getOrNull() }
+        } ?: emptyList()
         detailControlTint = { root ->
             val palette = colors(detailTextContext(root))
             fun visit(view: View) {
@@ -1286,7 +1305,7 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
                 if (name == "action_btn" && view.background != null && view.backgroundTintList?.defaultColor != palette.active)
                     view.backgroundTintList = ColorStateList.valueOf(palette.active)
                 if (view is CompoundButton) {
-                    if (switch.isInstance(view)) {
+                    if (switch?.isInstance(view) == true) {
                         val changed = synchronized(controlPalettes) { controlPalettes[view] != palette }
                         if (changed) {
                             val values = intArrayOf(palette.active, palette.inactiveIcon, palette.disabled, palette.disabled,
