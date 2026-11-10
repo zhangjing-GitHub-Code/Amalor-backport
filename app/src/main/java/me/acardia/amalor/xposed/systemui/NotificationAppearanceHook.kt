@@ -22,6 +22,8 @@ import android.widget.TextView
 import androidx.core.graphics.ColorUtils
 import me.acardia.amalor.NativeFeatureOptions
 import java.lang.ref.WeakReference
+import java.lang.reflect.NoSuchFieldException
+import java.lang.reflect.NoSuchMethodException
 import java.util.WeakHashMap
 import kotlin.math.roundToInt
 
@@ -187,10 +189,28 @@ internal class NotificationAppearanceHook(
             "optional material wrappers" to ::installMaterialWrappers,
         )) runCatching(install).onFailure { error ->
             // A missing optional OEM adapter must not suppress the handle and all later hooks.
-            r.error("Notification appearance $name unavailable", error.cause ?: error)
-            if (name == "backgrounds" || name == "content lifecycle") failures += name
+            if (error.absentClass()) {
+                r.info("Notification appearance skipped: $name")
+            } else {
+                r.error("Notification appearance $name unavailable", error.cause ?: error)
+                if (name == "backgrounds" || name == "content lifecycle") failures += name
+            }
         }
         check(failures.isEmpty()) { "Notification core unavailable: ${failures.joinToString()}" }
+    }
+
+    /** True when the failure names a class, method or field this ROM does not ship. */
+    private fun Throwable.absentClass(): Boolean {
+        var current: Throwable? = this
+        repeat(16) {
+            val candidate = current ?: return false
+            when (candidate) {
+                is ClassNotFoundException, is NoClassDefFoundError, is TypeNotPresentException,
+                is NoSuchMethodException, is NoSuchFieldException -> return true
+            }
+            current = candidate.cause
+        }
+        return false
     }
 
     private fun installSpotlight() {
@@ -246,15 +266,18 @@ internal class NotificationAppearanceHook(
             fallback
         }
         val extension = r.type("com.oplus.systemui.statusbar.notification.row.NotificationBackgroundViewExtImp")
-        val materialColor = extension.getDeclaredMethod("setDrawableMaterialColor")
-        r.hook("notification-appearance:background-material-color", materialColor) { chain ->
-            if (drawing.get() != null) null else chain.proceed()
+        // ColorOS 15 has no setDrawableMaterialColor; the drawable tint is handled elsewhere there.
+        val materialColor = runCatching { extension.getDeclaredMethod("setDrawableMaterialColor") }.getOrNull()
+        if (materialColor != null) {
+            r.hook("notification-appearance:background-material-color", materialColor) { chain ->
+                if (drawing.get() != null) null else chain.proceed()
+            }
         }
         val custom = background.getDeclaredMethod("setCustomBackground", Drawable::class.java)
         r.hook("notification-appearance:background-rebound", custom) { chain ->
             chain.proceed().also { prepareBackground(chain.thisObject as View) }
         }
-        listOf(setTint, draw, blurDrawable, setBlurEnabled, materialColor, custom,
+        listOfNotNull(setTint, draw, blurDrawable, setBlurEnabled, materialColor, custom,
             blurProxy.getDeclaredMethod("setBlurType", r.type("${blurProxy.name}\$BlurType")),
             r.type("com.oplusos.systemui.common.blurability.drawable.AutoBlurDrawable").getDeclaredMethod("draw", Canvas::class.java),
             r.type("com.oplusos.systemui.common.blurability.drawable.MaskBlurDrawable").getDeclaredMethod("draw", Canvas::class.java),
@@ -306,13 +329,16 @@ internal class NotificationAppearanceHook(
             }
         }
         r.module.deoptimize(visible)
-        val applier = r.type("com.oplus.systemui.notification.row.material.MaterialColorApplier")
-        val mode = r.type("com.oplus.systemui.notification.row.material.MaterialColorMode")
-        val apply = applier.getDeclaredMethod("applyColorMode", Context::class.java, row, mode)
-        r.hook("notification-appearance:color-mode", apply) { chain ->
-            chain.proceed().also { if (r.enabled(key)) register(chain.getArg(1) as View) }
+        // The material color pipeline only exists on ColorOS 17.
+        runCatching {
+            val applier = r.type("com.oplus.systemui.notification.row.material.MaterialColorApplier")
+            val mode = r.type("com.oplus.systemui.notification.row.material.MaterialColorMode")
+            val apply = applier.getDeclaredMethod("applyColorMode", Context::class.java, row, mode)
+            r.hook("notification-appearance:color-mode", apply) { chain ->
+                chain.proceed().also { if (r.enabled(key)) register(chain.getArg(1) as View) }
+            }
+            r.module.deoptimize(apply)
         }
-        r.module.deoptimize(apply)
     }
 
     private fun repaintBoundText(view: TextView) {
