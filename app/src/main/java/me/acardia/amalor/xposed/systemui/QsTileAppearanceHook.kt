@@ -125,6 +125,7 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             "click-only connected feedback" to { clickMotion.install() },
             "icons" to ::installIcons,
             "backgrounds" to ::installBackgrounds,
+            "solid tile backgrounds" to ::installSolidTileBackgrounds,
             "detail backgrounds" to ::installDetailBackgrounds,
             "detail content lifecycle" to ::installDetailContentLifecycle,
             "remote detail theme" to {
@@ -2058,6 +2059,25 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             r.type("com.oplus.systemui.qs.base.tile.QSLottieAnimationView\$ColorfulConfig")))
         r.module.deoptimize(r.type("com.oplus.systemui.qs.base.tile.QSLottieAnimationView\$1")
             .getDeclaredMethod("onCompositionLoaded", r.type("com.airbnb.lottie.LottieComposition")))
+    }
+
+    /**
+     * ColorOS 15 has no TileDrawableWrapper: the tile background is chosen at creation time,
+     * blur via AutoBlurDrawable or solid via SmoothCornersGradientDrawable. Forcing
+     * isMixColorSupport to report false makes the native solid path apply, keeping the
+     * system's own colors, corner radius and state animation.
+     */
+    private fun installSolidTileBackgrounds() {
+        val owner = r.type("com.oplus.systemui.qs.base.widget.QsViewBackgroundKt")
+        val support = owner.declaredMethods.single {
+            it.name == "isMixColorSupport" && it.parameterCount == 1 &&
+                it.returnType == Boolean::class.javaPrimitiveType &&
+                it.parameterTypes[0].name.endsWith("QsViewInfoProvider")
+        }
+        r.hook("qs-appearance:solid-tile-backgrounds", support) { chain ->
+            if (r.enabled(key)) false else chain.proceed()
+        }
+        r.module.deoptimize(support)
     }
 
     private fun installBackgrounds() {

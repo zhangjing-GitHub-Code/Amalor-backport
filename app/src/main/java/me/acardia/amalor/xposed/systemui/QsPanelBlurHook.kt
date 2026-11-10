@@ -1,5 +1,6 @@
 package me.acardia.amalor.xposed.systemui
 
+import java.lang.reflect.Method
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
@@ -87,13 +88,13 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
         val dozing = statusType.getDeclaredMethod("isDozing")
         val keyguardController = r.field(depth, "keyguardStateController")
         val fading = r.field(r.type("com.android.systemui.statusbar.policy.KeyguardStateControllerImpl"), "mKeyguardFadingAway")
-        val launchDisabled = depth.getDeclaredMethod("getAreBlursDisabledForAppLaunch").apply { isAccessible = true }
+        val launchDisabled = renamed(depth, "getBlursDisabledForAppLaunch", "getAreBlursDisabledForAppLaunch")
         val unlockDisabled = depth.getDeclaredMethod("getBlursDisabledForUnlock")
         val mirror = r.field(depth, "brightnessMirrorSpring")
         val mirrorRatio = r.type("com.android.systemui.statusbar.NotificationShadeDepthController\$DepthAnimation")
             .getDeclaredMethod("getRatio")
         val blur = r.type("com.android.systemui.statusbar.BlurUtils")
-        val supports = blur.getDeclaredMethod("supportsBlursOnWindowsBase")
+        val supports = renamed(blur, "supportsBlursOnWindows", "supportsBlursOnWindowsBase")
         val viewRoot = View::class.java.getDeclaredMethod("getViewRootImpl").apply { isAccessible = true }
         val rootType = r.type("android.view.ViewRootImpl")
         val surface = rootType.getDeclaredMethod("getSurfaceControl")
@@ -367,8 +368,24 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
         val listener = Consumer<Boolean> { main.post { schedule() } }
         crossType.getDeclaredMethod("addListener", Executor::class.java, Consumer::class.java)
             .invoke(cross, Executor { main.post(it) }, listener)
-        listOf(applyWindowBg, update, doFrame, bind, position, typedPosition, raw, instantCollapse, focus, gauss, amount, draw,
-            scrimViewExt.getDeclaredMethod("setBlurAndScaleAmount", Float::class.javaPrimitiveType, String::class.java),
+        listOfNotNull(applyWindowBg, update, doFrame, bind, position, typedPosition, raw, instantCollapse, focus, gauss, amount, draw,
+            // ColorOS 15 splits this into setBlurAmount and setScaleAmount.
+            runCatching {
+                scrimViewExt.getDeclaredMethod("setBlurAndScaleAmount", Float::class.javaPrimitiveType, String::class.java)
+            }.getOrNull(),
+            runCatching {
+                scrimViewExt.getDeclaredMethod("setBlurAmount", Float::class.javaPrimitiveType, String::class.java)
+            }.getOrNull(),
         ).forEach { r.module.deoptimize(it) }
     }
+
+    /**
+     * Resolve a method by the first name that exists. Several of these were renamed
+     * between releases: ColorOS 15 uses getBlursDisabledForAppLaunch and
+     * supportsBlursOnWindows where 17 has the longer names.
+     */
+    private fun renamed(type: Class<*>, vararg names: String): Method =
+        names.firstNotNullOfOrNull { name ->
+            runCatching { type.getDeclaredMethod(name).apply { isAccessible = true } }.getOrNull()
+        } ?: throw NoSuchMethodException("${type.name}: ${names.joinToString()}")
 }
