@@ -44,7 +44,7 @@ Material 3 Expressive components and motion, adaptive navigation, theme and pale
 
 ## Installation and use
 
-1. Use **Android 17 (API 37) or later**. ColorOS 17 is the primary adaptation target; individual features depend on system-component versions.
+1. Use **Android 15 (API 35) or later**. ColorOS 15 through 17 are supported; features that rely on system classes only present in ColorOS 17 are skipped automatically on older releases.
 2. Install [LSPosed](https://github.com/LSPosed/LSPosed) or a compatible framework supporting **Modern Xposed API 102**.
 3. Install and enable Amalor in the framework, then select the scopes you need:
 
@@ -71,7 +71,7 @@ Current adaptation references include SystemUI 17.99.02, launcher 17.3.12 / 17.5
 | Android Gradle Plugin | 9.3.2 |
 | Kotlin | 2.4.10 |
 | Android SDK | 37 |
-| minSdk / targetSdk | 37 / 37 |
+| minSdk / targetSdk | 35 / 35 |
 
 Miuix Navigation is distributed through GitHub Packages. Set credentials with `read:packages` access in your user-level `~/.gradle/gradle.properties`:
 

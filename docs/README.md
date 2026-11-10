@@ -44,7 +44,7 @@ Material 3 Expressive 组件与动效、自适应导航栏、主题模式与调�
 
 ## 安装与使用
 
-1. 使用 **Android 17（API 37）或更高版本**。当前主要适配目标为 ColorOS 17，具体功能取决于系统组件版本。
+1. 使用 **Android 15（API 35）或更高版本**。适配目标为 ColorOS 15 至 17，具体功能取决于系统组件版本：部分功能依赖 ColorOS 17 才有的系统类，在较低版本上会自动跳过。
 2. 安装支持 **Modern Xposed API 102** 的 [LSPosed](https://github.com/LSPosed/LSPosed) 或兼容框架。
 3. 安装 Amalor，在框架中启用模块，并勾选所需作用域：
 
@@ -71,7 +71,7 @@ Material 3 Expressive 组件与动效、自适应导航栏、主题模式与调�
 | Android Gradle Plugin | 9.3.2 |
 | Kotlin | 2.4.10 |
 | Android SDK | 37 |
-| minSdk / targetSdk | 37 / 37 |
+| minSdk / targetSdk | 35 / 35 |
 
 Miuix Navigation 通过 GitHub Packages 获取。在用户级 `~/.gradle/gradle.properties` 配置具有 `read:packages` 权限的凭据：
 
