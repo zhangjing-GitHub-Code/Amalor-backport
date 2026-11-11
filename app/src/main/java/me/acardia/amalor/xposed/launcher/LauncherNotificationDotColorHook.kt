@@ -156,7 +156,7 @@ internal class LauncherNotificationDotColorHook(private val r: LauncherIconRunti
                 val item = r.get(params, "item")
                 val host = r.get(requireNotNull(chain.getThisObject()), "mIcon") as? View
                 if (bigFolderProbe.add("source")) {
-                    r.debug("dot-color: big-folder source item=${item != null} bitmap=${itemBitmap(item) != null} " +
+                    r.info("dot-color: big-folder source item=${item != null} bitmap=${itemBitmap(item) != null} " +
                         "host=${host != null}")
                 }
                 IconSource(itemBitmap(item), host)
@@ -207,7 +207,7 @@ internal class LauncherNotificationDotColorHook(private val r: LauncherIconRunti
         val palette = synchronized(bitmapPalettes) { cached?.palette }
         if (palette == null) {
             if (bigFolderProbe.add("no-palette")) {
-                r.debug("dot-color: no palette (source=${source != null} cached=${cached != null} host=${host != null})")
+                r.info("dot-color: no palette (source=${source != null} cached=${cached != null} host=${host != null})")
             }
             return null
         }
