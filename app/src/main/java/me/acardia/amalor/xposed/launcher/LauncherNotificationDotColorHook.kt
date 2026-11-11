@@ -25,6 +25,8 @@ import java.util.concurrent.Executors
 internal class LauncherNotificationDotColorHook(private val r: LauncherIconRuntime) {
     private val key = LauncherIconOptions.COLORFUL_DOTS
     private val rendererName = "com.android.launcher3.icons.OplusDotRenderer"
+    /** Debug keys already logged on the big-folder path. */
+    private val bigFolderProbe = mutableSetOf<String>()
     private val itemType by lazy { r.type("com.android.launcher3.model.data.ItemInfoWithIcon") }
     private val bitmapInfo by lazy { r.field(itemType, "bitmap") }
     private val iconBitmap by lazy { r.field(r.type("com.android.launcher3.icons.BitmapInfo"), "icon") }
@@ -143,23 +145,29 @@ internal class LauncherNotificationDotColorHook(private val r: LauncherIconRunti
     private fun installBigFolder() {
         val manager = r.type("com.android.launcher3.folder.big.BigFolderPreviewItemManager")
         // The source-side dot hook needs the preview item shape this ROM ships.
+        // The per-item overload is the one to scope: it is called once per preview cell and
+        // owns both the dot and the number drawing. The List overload only iterates.
         manager.declaredMethods.firstOrNull {
             it.name == "drawDotIfNecessary" && it.parameterCount == 2 &&
-                it.parameterTypes[1].name.endsWith("PreviewItemDrawingParams")
+                !List::class.java.isAssignableFrom(it.parameterTypes[1])
         }?.let { drawDot ->
             sourceScope("dot-color:big-folder-source", drawDot) { chain ->
                 val params = chain.getArg(1) ?: return@sourceScope null
                 val item = r.get(params, "item")
                 val host = r.get(requireNotNull(chain.getThisObject()), "mIcon") as? View
+                if (bigFolderProbe.add("source")) {
+                    r.debug("dot-color: big-folder source item=${item != null} bitmap=${itemBitmap(item) != null} " +
+                        "host=${host != null}")
+                }
                 IconSource(itemBitmap(item), host)
             }
-        }
+        } ?: r.info("dot-color: big-folder per-item overload not found")
         val owner = "com.android.launcher3.folder.big.BigFolderNumBadgeRender"
-        scoped("dot-color:big-folder-draw", method(owner, "draw", 4)) { _, restores ->
+        scoped("dot-color:big-folder-draw", method(owner, "draw", 3)) { _, restores ->
             val colors = drawingColors(null) ?: return@scoped
             tint(restores, resolveDotDrawable(), colors.background)
         }
-        scoped("dot-color:big-folder-number", method(owner, "drawNumberForBigFolderItem", 6)) { chain, restores ->
+        scoped("dot-color:big-folder-number", method(owner, "drawNumberForBigFolderItem", 4)) { chain, restores ->
             val colors = drawingColors(null) ?: return@scoped
             val renderer = requireNotNull(chain.getThisObject())
             tint(restores, numberPill(renderer), colors.background)
@@ -196,7 +204,13 @@ internal class LauncherNotificationDotColorHook(private val r: LauncherIconRunti
     private fun drawingColors(host: Any?): LauncherBadgeColors? {
         val source = drawingSource.get()
         val cached = if (source != null) entry(source.bitmap, source.host) else (host as? View)?.let(::hostEntry)
-        val palette = synchronized(bitmapPalettes) { cached?.palette } ?: return null
+        val palette = synchronized(bitmapPalettes) { cached?.palette }
+        if (palette == null) {
+            if (bigFolderProbe.add("no-palette")) {
+                r.debug("dot-color: no palette (source=${source != null} cached=${cached != null} host=${host != null})")
+            }
+            return null
+        }
         // Follow the actual system configuration; do not invert ColorOS's night-mode bit.
         val context = (host as? View)?.context?.applicationContext ?: launcherContext
         val configuration = (context?.resources ?: Resources.getSystem()).configuration
