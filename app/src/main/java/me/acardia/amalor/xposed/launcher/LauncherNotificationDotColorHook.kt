@@ -93,7 +93,7 @@ internal class LauncherNotificationDotColorHook(private val r: LauncherIconRunti
             }
         }
         r.install("dot-color:number", key) {
-            scoped("dot-color:draw-number", method(rendererName, "drawNumber", 5)) { _, restores ->
+            scoped("dot-color:draw-number", method(rendererName, "drawNumber", 5)) { chain, restores ->
                 val colors = drawingColors(null) ?: return@scoped
                 val renderer = requireNotNull(chain.getThisObject())
                 tint(restores, numberPill(renderer), colors.background)
