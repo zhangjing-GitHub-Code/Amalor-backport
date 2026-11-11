@@ -258,7 +258,10 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
         // Reference: Android 17 TileDefaults uses SE1 for inactive cards/tiles and SE2
         // for an inactive dual-target icon circle. BlurPanelColors composites the panel
         // scrim over shade_panel_bg_color; its selectors already contain their native alpha.
-        val panelBg = namedColor("shade_panel_bg_color") ?: optionalRole("system_surface_container") ?: effect(0)
+        // ColorOS 15 has no shade_panel_bg_color. Falling back to the same role the
+        // notification card uses made the panel and the cards indistinguishable, so the
+        // panel takes the container below it instead.
+        val panelBg = namedColor("shade_panel_bg_color") ?: optionalRole("system_surface_container_low") ?: effect(1)
         val panelScrim = namedColor("shade_panel_scrim") ?: namedColor("shade_panel_scrim_color")
         val basePanel = if (panelScrim != null) ColorUtils.compositeColors(panelScrim, panelBg) else panelBg
         val primary = role("system_primary")
@@ -274,7 +277,12 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
         } ?: outputTrack
         Colors(
             active = primary, onActive = role("system_on_primary"),
-            inactive = effect(1), inactiveIcon = effect(2), onInactive = onSurface,
+            inactive = effect(1),
+            // surface_effect_2 is the background of an inactive icon circle, not an icon
+            // colour. On ColorOS 15 it maps to the lightest container, which left icons
+            // invisible on the light theme, so the regular inactive icon role is used.
+            inactiveIcon = role("system_on_surface_variant"),
+            onInactive = onSurface,
             onSecondary = onSurfaceVariant,
             // ShadePanelScrim in the supplied native APK enables the SE0 underlay.
             // Compose the existing panel above it, preserving the system role values.
@@ -2078,6 +2086,25 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             if (r.enabled(key)) false else chain.proceed()
         }
         r.module.deoptimize(support)
+        installSolidSliderTrack()
+    }
+
+    /**
+     * The volume and brightness tracks build their own BlurDrawable instead of going through
+     * QsViewBackground, so the switch above does not reach them. Clearing the flag before
+     * onDraw makes the bar fall back to the native solid COUIVerticalSeekBar painting.
+     */
+    private fun installSolidSliderTrack() {
+        val bar = r.type("com.oplus.systemui.qs.base.seek.OplusQsVerticalSeekBar")
+        val flag = runCatching { r.field(bar, "isSupportMixColor") }.getOrNull() ?: return
+        val draw = bar.declaredMethods.firstOrNull {
+            it.name == "onDraw" && it.parameterTypes.contentEquals(arrayOf(Canvas::class.java))
+        } ?: return
+        r.hook("qs-appearance:solid-slider-track", draw) { chain ->
+            if (r.enabled(key) && flag.getBoolean(chain.thisObject)) flag.setBoolean(chain.thisObject, false)
+            chain.proceed()
+        }
+        r.module.deoptimize(draw)
     }
 
     private fun installBackgrounds() {

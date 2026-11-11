@@ -5,6 +5,7 @@ import android.content.res.Configuration
 import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffColorFilter
 import android.graphics.drawable.GradientDrawable
@@ -71,18 +72,29 @@ internal class LauncherNotificationDotColorHook(private val r: LauncherIconRunti
                 }
             }
         }
+        // ColorOS 15 passes no View to the renderer, so record the host while the per-icon
+        // draw entry runs. Both the dot and the number hooks below read it from there.
+        r.install("dot-color:render-source", key) {
+            r.type("com.android.launcher3.iconrender.impl.IconNotificationDotRenderer")
+                .declaredMethods
+                .filter { it.name == "drawDotIfNecessary" && it.parameterTypes.contentEquals(arrayOf(Canvas::class.java)) }
+                .forEach { method ->
+                    sourceScope("dot-color:render-source", method) { chain ->
+                        val manager = r.get(requireNotNull(chain.getThisObject()), "mRenderManager")
+                        val host = manager?.let { r.call(it, "getHostView") } as? View
+                        if (host == null) null else IconSource(hostBitmap(host), host)
+                    }
+                }
+        }
         r.install("dot-color:dot", key) {
-            scoped("dot-color:draw", method(rendererName, "draw", 3)) { chain, restores ->
-                val host = r.get(requireNotNull(chain.getThisObject()), "drawDotView")
-                val colors = drawingColors(host) ?: return@scoped
+            scoped("dot-color:draw", method(rendererName, "draw", 3)) { _, restores ->
+                val colors = drawingColors(null) ?: return@scoped
                 tint(restores, resolveDotDrawable(), colors.background)
             }
         }
         r.install("dot-color:number", key) {
-            val drawNumber = method(rendererName, "drawNumber", 5)
-            val paramsIndex = drawNumber.drawParamsIndex()
-            scoped("dot-color:draw-number", drawNumber) { chain, restores ->
-                val colors = drawingColors(chain.getArg(paramsIndex)) ?: return@scoped
+            scoped("dot-color:draw-number", method(rendererName, "drawNumber", 5)) { _, restores ->
+                val colors = drawingColors(null) ?: return@scoped
                 val renderer = requireNotNull(chain.getThisObject())
                 tint(restores, numberPill(renderer), colors.background)
                 textColor(restores, renderer, colors.foreground)
@@ -200,9 +212,11 @@ internal class LauncherNotificationDotColorHook(private val r: LauncherIconRunti
     }
 
     private fun textColor(restores: MutableList<() -> Unit>, renderer: Any, color: Int) {
-        val original = r.get(renderer, "mBadgeNumTextColor")
-        restores.add { r.set(renderer, "mBadgeNumTextColor", original) }
-        r.set(renderer, "mBadgeNumTextColor", color)
+        // mBadgeNumTextColor is final and already copied into the paint during init.
+        val paint = r.get(renderer, "mBadgeNumPaint") as? Paint ?: return
+        val original = paint.color
+        restores.add { paint.color = original }
+        paint.color = color
     }
 
     private fun numberPill(renderer: Any) = r.get(renderer, "mGradientNumBg") as? GradientDrawable
@@ -304,7 +318,12 @@ internal class LauncherNotificationDotColorHook(private val r: LauncherIconRunti
                     }.getOrNull()
                 }
         }.getOrNull()
-        dotDrawable = drawable
-        return drawable
+        val resolved = drawable ?: runCatching {
+            // ColorOS 15 keeps the shared dot drawable on a Kotlin singleton.
+            val instance = r.type("com.android.common.util.CacheUtils").getField("INSTANCE").get(null)
+            r.call(instance, "getDotDrawable") as? GradientDrawable
+        }.getOrNull()
+        dotDrawable = resolved
+        return resolved
     }
 }
