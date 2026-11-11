@@ -226,7 +226,15 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                     launchDisabled.invoke(host) != true && unlockDisabled.invoke(host) != true &&
                     supports.invoke(null) == true && crossEnabled.invoke(cross) == true && gaussDisabled.invoke(null) != true &&
                     view.context.getSystemService(PowerManager::class.java)?.isPowerSaveMode != true
-                if (!allowed) { clear(); return@runCatching }
+                if (!allowed) {
+                    // A single frame outside the allowed window during a panel transition would
+                    // otherwise drop the blur and show the window underneath. Only release it
+                    // once the panel has actually left the visible range.
+                    val stillAnimating = activeRoot != null && controller != null && ratio > 0f &&
+                        (rawExpansion.invoke(controller) as Number).toFloat() > 0f
+                    if (!stillAnimating) clear()
+                    return@runCatching
+                }
                 val target = viewRoot.invoke(view.rootView) ?: return@runCatching
                 val control = surface.invoke(target) as SurfaceControl
                 if (!control.isValid) { clear(); return@runCatching }
