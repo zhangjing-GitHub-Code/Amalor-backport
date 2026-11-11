@@ -101,8 +101,12 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
         @SuppressLint("BlockedPrivateApi")
         val setWindowBlurRadius = SurfaceControl.Transaction::class.java.getDeclaredMethod("setBackgroundBlurRadius",
             SurfaceControl::class.java, Int::class.javaPrimitiveType)
-        val apply = blur.getDeclaredMethod("applyBlur", rootType, Int::class.javaPrimitiveType,
-            Boolean::class.javaPrimitiveType, Float::class.javaPrimitiveType)
+        // ColorOS 15 declares applyBlur without the trailing fraction argument.
+        val apply = runCatching {
+            blur.getDeclaredMethod("applyBlur", rootType, Int::class.javaPrimitiveType,
+                Boolean::class.javaPrimitiveType, Float::class.javaPrimitiveType)
+        }.getOrNull() ?: blur.getDeclaredMethod("applyBlur", rootType,
+            Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
         val scrimType = r.type("com.android.systemui.statusbar.phone.ScrimController")
         val behind = r.field(scrimType, "mScrimBehind")
         val qsVisible = scrimType.getDeclaredMethod("getQsBottomVisible")
@@ -169,7 +173,10 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                     // our previous radius when the platform capability changes while QS is open.
                     val control = surface.invoke(oldRoot) as SurfaceControl
                     if (control.isValid) {
-                        if (supports.invoke(null) == true) apply.invoke(activeBlur, oldRoot, 0, false, 1f)
+                        if (supports.invoke(null) == true) {
+                            if (apply.parameterCount == 4) apply.invoke(activeBlur, oldRoot, 0, false, 1f)
+                            else apply.invoke(activeBlur, oldRoot, 0, false)
+                        }
                         else SurfaceControl.Transaction().use { transaction ->
                             setWindowBlurRadius.invoke(transaction, control, 0)
                             transaction.apply()
@@ -241,7 +248,8 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                     // Only the full-panel screenshot/gradient layer is handed over to window blur.
                     if (enabled.invoke(panelProxy) == true) setEnabled.invoke(panelProxy, false)
                 }
-                apply.invoke(helper, target, pixels, false, 1f)
+                if (apply.parameterCount == 4) apply.invoke(helper, target, pixels, false, 1f)
+                else apply.invoke(helper, target, pixels, false)
                 val firstFrame = activeRoot == null
                 val nextFraction = ratio * (1f - brightness)
                 val nextColor = surfaceColor(view.context)
