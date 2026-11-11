@@ -31,7 +31,9 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          cache-read-only: true
+          # Rely on the action default: read-only for non-default branches,
+          # writable for the default branch. Release builds are rare, so this
+          # only needs to keep the cache warm instead of freezing it forever.
           build-scan-publish: false
 
       - name: Grant execute permission for Gradle

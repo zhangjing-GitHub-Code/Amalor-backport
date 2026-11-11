@@ -52,7 +52,14 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          cache-read-only: true
+          # The Gradle User Home cache must be writable on dev, otherwise the
+          # only entry that ever gets saved is the one from the day this was
+          # first configured: every later run restores nothing and re-downloads
+          # the whole dependency graph. Push / manual runs write a new entry
+          # keyed by commit, restore-keys reuse the previous one; pull request
+          # runs only read (their cache scope is refs/pull/<n>/merge and cannot
+          # be reused anyway).
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
           build-scan-publish: false
 
       # Release signing falls back to the debug key when no keystore is configured.

@@ -39,6 +39,8 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
     private var coveredWindow = WeakReference<View>(null)
     private var coveredSource = WeakReference<View>(null)
     private var resetCoveredBlur: ((View) -> Unit)? = null
+    /** Debug keys already logged, so a per-frame path does not flood the log. */
+    private val frameReported = mutableSetOf<String>()
 
     fun refresh() = requestFrame?.invoke()
 
@@ -153,6 +155,9 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
             val view = proxyView.invoke(chain.thisObject) as? View
             if (view != null && isCovered(view) &&
                 r.enabled(NativeFeatureOptions.QS_TILE_NATIVE_APPEARANCE)) {
+                // A covered window keeps the blur it already had; dropping it here is what
+                // exposes the content behind the panel during a transition.
+                r.debug("QS blur: covered window suppresses applyWindowBgBlur")
                 resetWindowBlur(view)
                 null
             } else chain.proceed()
@@ -166,6 +171,7 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
         @SuppressLint("BlockedPrivateApi")
         fun clear() {
             if (activeRoot == null && activeProxy == null && activeView.get() == null) return
+            frameReported.add("clear-ran")
             val oldRoot = activeRoot
             try {
                 if (oldRoot != null) {
@@ -195,6 +201,7 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
             }
         }
         resetCoveredBlur = { view ->
+            r.debug("QS blur: resetCoveredBlur clears window blur")
             resetWindowBlur(view)
             // Retire this window's tint immediately too; the Activity may draw before our next frame callback.
             if (activeView.get()?.rootView === view.rootView) clear()
@@ -233,6 +240,11 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                     val stillAnimating = activeRoot != null && controller != null && ratio > 0f &&
                         (rawExpansion.invoke(controller) as Number).toFloat() > 0f
                     if (!stillAnimating) clear()
+                    if (frameReported.add("not-allowed")) {
+                        r.debug("QS blur: frame not allowed (view=${view != null} host=${host != null} " +
+                            "ratio=$ratio qsShowing=$qsShowing stillAnimating=$stillAnimating " +
+                            "activeRoot=${activeRoot != null})")
+                    }
                     return@runCatching
                 }
                 val target = viewRoot.invoke(view.rootView) ?: return@runCatching
@@ -269,7 +281,7 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 panelColor = nextColor
                 if (repaint) view.invalidate()
                 if (firstFrame) {
-                    r.debug("QS panel AOSP window blur applied: radius=$pixels, separateQs=$separateRatio")
+                    r.debug("QS blur: applied radius=$pixels separateQs=$separateRatio")
                 }
             }.onFailure {
                 if (!reported) { reported = true; r.error("QS panel blur fallback", it.cause ?: it) }
