@@ -208,9 +208,14 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
         }
         val frame = Choreographer.FrameCallback {
             pending = false
+            if (frameReported.add("frame")) r.debug("QS blur: frame() first call")
             runCatching {
                 val controller = scrim.get()
                 val view = controller?.let { behind.get(it) } as? View
+                if (frameReported.add("frame-state")) {
+                    r.debug("QS blur: frame-state controller=${controller != null} view=${view != null} " +
+                        "depths=${synchronized(depths) { depths.size }}")
+                }
                 val candidates = synchronized(depths) { depths.keys.toList() }
                 val host = if (view == null) null else candidates.firstOrNull {
                     (root.get(it) as? View)?.rootView === view.rootView
@@ -290,6 +295,7 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
         }
         fun schedule() {
             if (Looper.myLooper() != Looper.getMainLooper()) { main.post { requestFrame?.invoke() }; return }
+            if (frameReported.add("schedule")) r.debug("QS blur: schedule() first call")
             if (!pending) { pending = true; Choreographer.getInstance().postFrameCallback(frame) }
         }
         requestFrame = ::schedule
