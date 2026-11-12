@@ -1979,50 +1979,42 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
                 r.module.deoptimize(method)
             }
         }
-        // Every icon tint on ColorOS 15 funnels through QSIconViewImpl#setTint, including the
-        // long-press reset that re-applies a cached system colour. Painting after it covers the
-        // tile icons, their animations and that reset in one place.
+        // ColorOS 15 draws QS as pages: OplusQSPageViewController creates the tiles with
+        // OplusQSIconView, and QSIconViewImpl is never instantiated. OplusQSIconView.tintColor
+        // is the only place that writes the icon tint, from both setIcon and
+        // updateIconColorImmediately.
         runCatching {
-            val iconView = r.type("com.android.systemui.qs.tileimpl.QSIconViewImpl")
+            val iconView = r.type("com.oplus.systemui.plugins.qs.tile.OplusQSIconView")
             val paint = iconView.declaredMethods.firstOrNull {
-                it.name == "setTint" && it.parameterCount == 2 &&
-                    it.parameterTypes[0] == ImageView::class.java &&
-                    it.parameterTypes[1] == Int::class.javaPrimitiveType
+                it.name == "tintColor" && it.parameterCount == 0
             } ?: run {
-                r.info("QS appearance: setTint not found on the icon view")
+                r.info("QS appearance: tintColor not found on OplusQSIconView")
+                return@runCatching
+            }
+            val iconField = runCatching { r.field(iconView, "iconView") }.getOrNull()
+            val stateField = runCatching { r.field(iconView, "tileState") }.getOrNull()
+            val disabledField = runCatching { r.field(iconView, "disabledByPolicy") }.getOrNull()
+            if (iconField == null) {
+                r.info("QS appearance: OplusQSIconView has no iconView field")
                 return@runCatching
             }
             paint.isAccessible = true
-            r.info("QS appearance: installed tile icon tint writer (QSIconViewImpl.setTint)")
-            // The colour writer may never run when the tile state does not change, so also
-            // observe the icon entry point to tell "not called" from "called but overridden".
-            val setIcon = runCatching {
-                r.type("com.oplus.systemui.qs.tileimpl.OplusQSIconViewImpl").declaredMethods.firstOrNull {
-                    it.name == "setIcon" && it.parameterCount == 3 &&
-                        it.parameterTypes[0] == ImageView::class.java
-                }
-            }.getOrNull()
-            if (setIcon != null) {
-                setIcon.isAccessible = true
-                r.hook("qs-appearance:icon-set", setIcon) { chain ->
-                    if (iconTintProbe.add("setIcon")) r.info("QS appearance: setIcon called")
-                    chain.proceed()
-                }
-                r.module.deoptimize(setIcon)
-            }
+            r.info("QS appearance: installed tile icon tint writer (OplusQSIconView.tintColor)")
             r.hook("qs-appearance:icon-tint-writer", paint) { chain ->
-                if (iconTintProbe.add("called")) r.info("QS appearance: setTint called")
                 val result = chain.proceed()
-                val image = chain.getArg(0) as? ImageView
-                if (image != null && isTile(image) && r.enabled(key)) runCatching {
+                val self = chain.thisObject
+                val image = iconField.get(self) as? ImageView
+                if (image != null && r.enabled(key)) runCatching {
                     val palette = colors(image.context)
-                    val tile = tileStateOf?.invoke(image)
+                    val tileState = stateField?.getInt(self) ?: 0
+                    val disabled = disabledField?.getBoolean(self) ?: false
                     val color = when {
-                        tile == null -> palette.onInactive
-                        QsAppearanceRules.unavailableTile(tile.state, false, tile.disabledByPolicy) ->
-                            palette.disabledIcon
-                        tile.state == 2 -> palette.onActive
+                        QsAppearanceRules.unavailableTile(tileState, false, disabled) -> palette.disabledIcon
+                        tileState == 2 -> palette.onActive
                         else -> palette.onInactive
+                    }
+                    if (iconTintProbe.add("tint")) {
+                        r.info("QS appearance: tintColor state=" + tileState + " color=%08x".format(color))
                     }
                     image.imageTintList = ColorStateList.valueOf(color)
                 }.onFailure { fallback("icon tint writer", it) }
@@ -2178,6 +2170,22 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
      */
     private fun installSolidSliderTrack() {
         val bar = r.type("com.oplus.systemui.qs.base.seek.OplusQsVerticalSeekBar")
+        // Clearing isSupportMixColor before onDraw only lasts one frame: updateColor$1 writes
+        // that field and onAttachedToWindow calls it again on every reattach, so pin it there.
+        val updateName = "updateColor" + 36.toChar() + "1"
+        val update = bar.declaredMethods.firstOrNull {
+            it.name == updateName && it.parameterCount == 1 &&
+                it.parameterTypes[0] == Boolean::class.javaPrimitiveType
+        }
+        if (update != null) {
+            update.isAccessible = true
+            r.hook("qs-appearance:solid-slider-track", update) { chain ->
+                if (r.enabled(key)) chain.proceed(arrayOf<Any?>(false)) else chain.proceed()
+            }
+            r.module.deoptimize(update)
+            r.info("QS appearance: installed solid slider track (updateColor" + 36.toChar() + "1)")
+            return
+        }
         val flag = runCatching { r.field(bar, "isSupportMixColor") }.getOrNull() ?: return
         val draw = bar.declaredMethods.firstOrNull {
             it.name == "onDraw" && it.parameterTypes.contentEquals(arrayOf(Canvas::class.java))
