@@ -1993,6 +1993,7 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             paint.isAccessible = true
             r.info("QS appearance: installed tile icon tint writer")
             r.hook("qs-appearance:icon-tint-writer", paint) { chain ->
+                if (iconTintProbe.add("called")) r.info("QS appearance: updateIconTintColor called")
                 val result = chain.proceed()
                 val image = chain.getArg(0) as? ImageView
                 val tileState = chain.getArg(1) as? Int

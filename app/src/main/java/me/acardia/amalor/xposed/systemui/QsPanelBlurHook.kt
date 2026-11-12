@@ -236,9 +236,12 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 val rawRatio = if (separateActive) separateRatio
                     else if (view != null && amountView.get() === view) panelAmount
                     else if (controller != null) (fraction.invoke(controller) as Number).toFloat().coerceIn(0f, 1f) else 0f
-                if (frameReported.add("ratio-source")) {
-                    r.debug("QS blur: ratio source separate=$separateActive separateQs=$separateRatio " +
-                        "amount=${view != null && amountView.get() === view} raw=$rawRatio")
+                if (ratioProbe < 12) {
+                    ratioProbe++
+                    r.info("QS blur: ratio separate=" + separateActive + " separateQs=" + separateRatio +
+                        " amount=" + (view != null && amountView.get() === view) + " panelAmount=" + panelAmount +
+                        " fraction=" + (controller?.let { (fraction.invoke(it) as Number).toFloat() } ?: -1f) +
+                        " raw=" + rawRatio)
                 }
                 // Switching between the notification centre and the control centre briefly
                 // reports a near-zero fraction on one of the two sources, and the fallback
