@@ -40,6 +40,8 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
     private var rawExpansionNow = 0f
     /** QS section expansion, which moves while the shade itself stays fully open. */
     private var qsExpansionNow = 0f
+    /** Shade expanded fraction, continuous while the user drags between the panels. */
+    private var shadeFractionNow = 0f
     /** Number of raw expansion samples already logged. */
     private var rawProbe = 0
     private var panelColor: Int? = null
@@ -129,6 +131,27 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
         // The shade's own expansion is 1.0 whenever the panel is open at all; the QS section has
         // its own fraction that moves while the user drags inside it.
         val qsExpansionField = runCatching { r.field(scrimType, "mQsExpansion") }.getOrNull()
+        // The shade's own expanded fraction is the value that moves continuously while the user
+        // drags between the notification and control centres. The scrim fields above only hold
+        // the endpoints, which is why they read as 0 or 1.
+        val panelController = runCatching {
+            r.type("com.android.systemui.shade.NotificationPanelViewController")
+        }.getOrNull()
+        // Hook the setter rather than digging for the instance: it is called with the continuous
+        // fraction on every drag step, and no field chain is involved.
+        runCatching {
+            val setExpanded = panelController?.getDeclaredMethod(
+                "setExpandedFraction", Float::class.javaPrimitiveType)
+            if (setExpanded != null) {
+                setExpanded.isAccessible = true
+                r.hook("qs-appearance:shade-expanded", setExpanded) { chain ->
+                    shadeFractionNow = (chain.getArg(0) as? Float)?.coerceIn(0f, 1f) ?: shadeFractionNow
+                    chain.proceed()
+                }
+                r.module.deoptimize(setExpanded)
+                r.info("QS appearance: installed shade expansion probe")
+            }
+        }
         val fraction = scrimType.getDeclaredMethod("getInterpolatedFraction")
         val scrimExtension = r.field(scrimType, "mExt")
         val scrimExt = r.type("com.oplus.systemui.statusbar.phone.ScrimControllerExImp")
@@ -259,6 +282,7 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 // source. rawExpansion only says the shade is open, and the separate-QS value
                 // is written at the endpoints, so both are fallbacks rather than drivers.
                 val rawRatio = when {
+                    shadeFractionNow > 0f -> shadeFractionNow
                     qsExpansionNow > 0f -> qsExpansionNow
                     separateRatio > 0f -> separateRatio
                     rawExpansionNow > 0f -> rawExpansionNow
@@ -270,6 +294,7 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                     ratioProbe++
                     r.info("QS blur: ratio qs=" + qsExpansionNow + " separate=" + separateRatio +
                         " raw=" + rawExpansionNow + " chosen=" + rawRatio +
+                        " shade=" + shadeFractionNow +
                         " qsField=" + (qsExpansionField != null) +
                         " controller=" + (controller != null))
                 }

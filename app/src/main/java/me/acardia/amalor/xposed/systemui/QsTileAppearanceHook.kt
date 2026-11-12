@@ -1163,6 +1163,45 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             }
             r.module.deoptimize(update)
         }
+        // Ordinary tiles are OplusQSTileView, not the highlight view: their labels are tinted in
+        // handleStateChanged by passing a ColorStateList to TextView.setTextColor, so the label
+        // hooks above never reached them.
+        runCatching {
+            val tileView = r.type("com.oplus.systemui.plugins.qs.tile.OplusQSTileView")
+            val label = r.field(tileView, "mLabel")
+            val second = runCatching { r.field(tileView, "mSecondLine") }.getOrNull()
+            val stateType = r.type("com.android.systemui.plugins.qs.QSTile\$State")
+            fun paintLabels(owner: Any) {
+                val context = (label.get(owner) as? View)?.context ?: return
+                val palette = colors(context)
+                (label.get(owner) as? TextView)?.let {
+                    if (it.currentTextColor != palette.onInactive) it.setTextColor(palette.onInactive)
+                }
+                second?.let { field ->
+                    (field.get(owner) as? TextView)?.let {
+                        if (it.currentTextColor != palette.onSecondary) it.setTextColor(palette.onSecondary)
+                    }
+                }
+            }
+            for (name in listOf("handleStateChanged", "onAttachedToWindow")) {
+                tileView.declaredMethods.filter {
+                    it.name == name && (it.parameterCount == 0 ||
+                        (it.parameterCount == 1 && it.parameterTypes[0] == stateType))
+                }.forEach { method ->
+                    method.isAccessible = true
+                    r.hook("qs-appearance:tile-label:$name", method) { chain ->
+                        chain.proceed().also {
+                            if (r.enabled(key)) runCatching { paintLabels(it) }
+                                .onFailure { fallback("tile label", it) }
+                        }
+                    }
+                    r.module.deoptimize(method)
+                }
+            }
+        }.onFailure {
+            if (it.absentTarget() == null) throw it
+            r.info("QS appearance: OplusQSTileView label hook absent")
+        }
         val resize = runCatching {
             r.type("com.oplus.systemui.plugins.qs.customize.view.tile.OplusQSResizeableTileView")
         }.getOrNull()
