@@ -255,10 +255,13 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 // Use one continuous source for the whole transition. separateQsFraction reads
                 // either near zero or exactly one, so letting it win made the radius jump between
                 // the two extremes while the user dragged between the panels.
+                // qsExpansion is the QS section itself and is the only continuously varying
+                // source. rawExpansion only says the shade is open, and the separate-QS value
+                // is written at the endpoints, so both are fallbacks rather than drivers.
                 val rawRatio = when {
                     qsExpansionNow > 0f -> qsExpansionNow
-                    separateRatio > 0f && separateRatio < 1f -> separateRatio
-                    rawExpansionNow > 0f && rawExpansionNow < 1f -> rawExpansionNow
+                    separateRatio > 0f -> separateRatio
+                    rawExpansionNow > 0f -> rawExpansionNow
                     view != null && amountView.get() === view -> panelAmount
                     controller != null -> (fraction.invoke(controller) as Number).toFloat().coerceIn(0f, 1f)
                     else -> 0f
@@ -266,7 +269,9 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 if (ratioProbe < 15) {
                     ratioProbe++
                     r.info("QS blur: ratio qs=" + qsExpansionNow + " separate=" + separateRatio +
-                        " raw=" + rawExpansionNow + " chosen=" + rawRatio)
+                        " raw=" + rawExpansionNow + " chosen=" + rawRatio +
+                        " qsField=" + (qsExpansionField != null) +
+                        " controller=" + (controller != null))
                 }
 
                 // Switching between the notification centre and the control centre briefly
