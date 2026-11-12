@@ -1979,31 +1979,33 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
                 r.module.deoptimize(method)
             }
         }
-        // ColorOS 15 has no TileIconColorState and paints tile icons with a single
-        // ColorStateList.valueOf(int) per state, so the palette is applied at that writer.
-        // ColorOS 17 keeps its ColorStateList route above and never reaches this hook.
+        // Every icon tint on ColorOS 15 funnels through QSIconViewImpl#setTint, including the
+        // long-press reset that re-applies a cached system colour. Painting after it covers the
+        // tile icons, their animations and that reset in one place.
         runCatching {
-            val iconView = r.type("com.oplus.systemui.qs.tileimpl.OplusQSIconViewImpl")
+            val iconView = r.type("com.android.systemui.qs.tileimpl.QSIconViewImpl")
             val paint = iconView.declaredMethods.firstOrNull {
-                it.name == "updateIconTintColor" && it.parameterCount == 3 &&
+                it.name == "setTint" && it.parameterCount == 2 &&
                     it.parameterTypes[0] == ImageView::class.java &&
                     it.parameterTypes[1] == Int::class.javaPrimitiveType
             } ?: run {
-                r.info("QS appearance: updateIconTintColor not found on the icon view")
+                r.info("QS appearance: setTint not found on the icon view")
                 return@runCatching
             }
             paint.isAccessible = true
             r.info("QS appearance: installed tile icon tint writer")
             r.hook("qs-appearance:icon-tint-writer", paint) { chain ->
-                if (iconTintProbe.add("called")) r.info("QS appearance: updateIconTintColor called")
+                if (iconTintProbe.add("called")) r.info("QS appearance: setTint called")
                 val result = chain.proceed()
                 val image = chain.getArg(0) as? ImageView
-                val tileState = chain.getArg(1) as? Int
-                if (image != null && tileState != null && r.enabled(key)) runCatching {
+                if (image != null && isTile(image) && r.enabled(key)) runCatching {
                     val palette = colors(image.context)
+                    val tile = tileStateOf?.invoke(image)
                     val color = when {
-                        QsAppearanceRules.unavailableTile(tileState, false, false) -> palette.disabledIcon
-                        tileState == 2 -> palette.onActive
+                        tile == null -> palette.onInactive
+                        QsAppearanceRules.unavailableTile(tile.state, false, tile.disabledByPolicy) ->
+                            palette.disabledIcon
+                        tile.state == 2 -> palette.onActive
                         else -> palette.onInactive
                     }
                     image.imageTintList = ColorStateList.valueOf(color)

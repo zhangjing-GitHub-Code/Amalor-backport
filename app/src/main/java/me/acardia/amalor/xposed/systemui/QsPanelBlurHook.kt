@@ -36,6 +36,8 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
     private var lastPixels = -1f
     /** Number of ratio samples already logged. */
     private var ratioProbe = 0
+    /** Latest shade expansion reported by setRawPanelExpansionFraction, updated every frame. */
+    private var rawExpansionNow = 0f
     private var panelColor: Int? = null
     private var amountView = WeakReference<View>(null)
     private var panelAmount = 0f
@@ -235,9 +237,16 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 // applied full blur to a collapsed QS and made the radius jump between the two
                 // sources during a transition.
                 val separateActive = separateRatio > 0f
-                val rawRatio = if (separateActive) separateRatio
-                    else if (view != null && amountView.get() === view) panelAmount
-                    else if (controller != null) (fraction.invoke(controller) as Number).toFloat().coerceIn(0f, 1f) else 0f
+                // Prefer the value the shade pushes every frame. The separate-QS params only
+                // apply in the split layout and getInterpolatedFraction is a scrim alpha curve,
+                // so neither tracks the panel while it moves.
+                val rawRatio = when {
+                    separateActive -> separateRatio
+                    rawExpansionNow > 0f -> rawExpansionNow
+                    view != null && amountView.get() === view -> panelAmount
+                    controller != null -> (fraction.invoke(controller) as Number).toFloat().coerceIn(0f, 1f)
+                    else -> 0f
+                }
                 if (ratioProbe < 12) {
                     ratioProbe++
                     r.info("QS blur: ratio separate=" + separateActive + " separateQs=" + separateRatio +
@@ -400,6 +409,9 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
         }
         val raw = scrimType.getDeclaredMethod("setRawPanelExpansionFraction", Float::class.javaPrimitiveType)
         r.hook("qs-appearance:panel-raw-expansion", raw) { chain ->
+            // This is the authoritative per-frame shade expansion. The scrim alpha curve and the
+            // separate-QS params are not, which is why they read as zero while the panel moves.
+            rawExpansionNow = (chain.getArg(0) as? Float)?.coerceIn(0f, 1f) ?: rawExpansionNow
             chain.proceed().also { scrim = WeakReference(chain.thisObject); schedule() }
         }
         val shade = r.type("com.android.systemui.shade.NotificationPanelViewController")
