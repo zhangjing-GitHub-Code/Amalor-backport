@@ -1144,6 +1144,48 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             }
         }
         r.module.deoptimize(switcher)
+        // The two large tiles are OplusQSHighlightTileViewImpl, whose labels are TextSwitcher
+        // instances coloured from four ColorStateList fields that initLabelColor assigns from
+        // COUI theme resources. Those resources are light-on-dark, so once the tile background is
+        // solid they no longer contrast. Replace the fields, which every later label update reads.
+        runCatching {
+            val highlight = r.type("com.oplus.systemui.plugins.qs.tile.OplusQSHighlightTileViewImpl")
+            val active = r.field(highlight, "mColorLabelActive")
+            val inactive = runCatching { r.field(highlight, "mColorLabelInActive") }.getOrNull()
+            val unavailable = runCatching { r.field(highlight, "mColorLabelUnavailable") }.getOrNull()
+            val second = runCatching { r.field(highlight, "mColorSecondLabelActive") }.getOrNull()
+            var count = 0
+            for (name in listOf("initLabelColor", "updateLabelColor")) {
+                val method = highlight.declaredMethods.firstOrNull {
+                    it.name == name && it.parameterCount == 0
+                } ?: continue
+                method.isAccessible = true
+                count++
+                r.hook("qs-appearance:highlight-label-colors:" + name, method) { chain ->
+                    chain.proceed().also {
+                        if (!r.enabled(key)) return@also
+                        runCatching {
+                            val owner = chain.thisObject ?: return@runCatching
+                            val view = owner as? View ?: return@runCatching
+                            val palette = colors(view.context)
+                            active.set(owner, ColorStateList.valueOf(palette.onInactive))
+                            inactive?.set(owner, ColorStateList.valueOf(palette.onInactive))
+                            unavailable?.set(owner, ColorStateList.valueOf(palette.disabledIcon))
+                            second?.set(owner, ColorStateList.valueOf(palette.onSecondary))
+                            if (stateProbe.add("highlight-colors")) {
+                                r.info("QS label: replaced highlight CSL onInactive=%08x"
+                                    .format(palette.onInactive))
+                            }
+                        }.onFailure { fallback("highlight label colors", it) }
+                    }
+                }
+                r.module.deoptimize(method)
+            }
+            r.info("QS appearance: highlight label colour hooks=" + count)
+        }.onFailure {
+            if (it.absentTarget() == null) throw it
+            r.info("QS appearance: highlight label colour class absent")
+        }
         // QsLabelView is a ColorOS 17 class; the switch and label hooks above still apply here.
         runCatching {
             val label = r.type("com.oplus.systemui.plugins.qs.customize.view.tile.QsLabelView")
