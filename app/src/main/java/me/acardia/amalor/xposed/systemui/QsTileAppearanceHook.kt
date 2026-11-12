@@ -1136,11 +1136,21 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             .getDeclaredMethod("setTextColor", TextSwitcher::class.java, ColorStateList::class.java)
         r.hook("qs-appearance:highlight-title-switcher", switcher) { chain ->
             val view = chain.getArg(0) as TextSwitcher
+            if (!r.enabled(key)) return@hook chain.proceed()
+            // This extension is the single exit for the large tiles' label colour: every path
+            // reaches it, including the inline assignments inside access$handleStateChanged. The
+            // root lookup is only used for bookkeeping, so a miss must not skip the tint.
             val root = owner(view)
-            if (!r.enabled(key) || root == null) return@hook chain.proceed()
-            val color = titleColor(root)
+            val color = if (root != null) titleColor(root) else colors(view.context).onInactive
             chain.proceed(arrayOf(view, ColorStateList.valueOf(color))).also {
-                for (index in 0 until view.childCount) (view.getChildAt(index) as? TextView)?.let { remember(it, root) }
+                if (root != null) {
+                    for (index in 0 until view.childCount) {
+                        (view.getChildAt(index) as? TextView)?.let { text -> remember(text, root) }
+                    }
+                }
+                if (stateProbe.add("highlight-switcher")) {
+                    r.info("QS label: highlight switcher tinted %08x root=%s".format(color, root != null))
+                }
             }
         }
         r.module.deoptimize(switcher)
@@ -2263,6 +2273,33 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
      * onDraw makes the bar fall back to the native solid COUIVerticalSeekBar painting.
      */
     private fun installSolidSliderTrack() {
+        // The track colours ship as translucent white layers designed to sit over a blurred
+        // wallpaper: #b3e6e6e6 progress over #33e6e6e6 background, about 1.3:1. On the solid
+        // background this module applies they become unreadable, so repaint the two segments from
+        // the palette at the same call sites the OEM uses.
+        runCatching {
+            val seekBar = r.type("com.coui.appcompat.seekbar.COUIVerticalSeekBar")
+            val setProgress = seekBar.getDeclaredMethod("setProgressColor", ColorStateList::class.java)
+            val setBackground = seekBar.getDeclaredMethod("setSeekBarBackgroundColor", ColorStateList::class.java)
+            r.hook("qs-appearance:slider-track-colors", setProgress) { chain ->
+                if (!r.enabled(key)) return@hook chain.proceed()
+                val bar = chain.thisObject as? View ?: return@hook chain.proceed()
+                val palette = colors(bar.context)
+                chain.proceed(arrayOf<Any>(ColorStateList.valueOf(palette.active)))
+            }
+            r.hook("qs-appearance:slider-track-bg", setBackground) { chain ->
+                if (!r.enabled(key)) return@hook chain.proceed()
+                val bar = chain.thisObject as? View ?: return@hook chain.proceed()
+                val palette = colors(bar.context)
+                chain.proceed(arrayOf<Any>(ColorStateList.valueOf(palette.inactive)))
+            }
+            r.module.deoptimize(setProgress)
+            r.module.deoptimize(setBackground)
+            r.info("QS appearance: installed slider track colours")
+        }.onFailure {
+            if (it.absentTarget() == null) throw it
+            r.info("QS appearance: slider track colour hooks absent")
+        }
         val bar = r.type("com.oplus.systemui.qs.base.seek.OplusQsVerticalSeekBar")
         // Clearing isSupportMixColor before onDraw only lasts one frame: updateColor$1 writes
         // that field and onAttachedToWindow calls it again on every reattach, so pin it there.
