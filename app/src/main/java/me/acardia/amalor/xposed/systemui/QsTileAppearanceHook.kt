@@ -81,6 +81,8 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
     private var inoperableAttr = 0
     // False on ColorOS 15, where TileViewFlag does not exist and the tile model carries the state.
     private var nativeTileFlags = false
+    /** Debug keys already logged while inspecting tile states. */
+    private val stateProbe = mutableSetOf<String>()
 
     internal data class Colors(
         val active: Int, val onActive: Int, val inactive: Int, val inactiveIcon: Int,
@@ -1046,6 +1048,10 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
     private fun stateColor(palette: Colors, states: IntArray, icon: Boolean): Int {
         if (!nativeTileFlags) {
             // Without TileViewFlag the array holds QSTile.State.state values.
+            if (stateProbe.add("first")) {
+                r.info("QS state: values=${states.joinToString(",")} icon=$icon " +
+                    "onInactive=%08x inactive=%08x".format(palette.onInactive, palette.inactive))
+            }
             val state = states.firstOrNull() ?: return if (icon) palette.onInactive else palette.inactive
             return when {
                 QsAppearanceRules.unavailableTile(state, false, false) -> if (icon) palette.disabledIcon else palette.disabled
