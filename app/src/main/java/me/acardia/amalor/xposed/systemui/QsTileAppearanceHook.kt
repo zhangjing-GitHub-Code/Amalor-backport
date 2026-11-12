@@ -1953,24 +1953,29 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             if (absent.absentTarget() == null) throw absent
             r.info("QS appearance: TileIconColorState absent, tile icon colors use the icon view proxy")
         }
+        // Each icon view class is independent: a ROM that ships only some of them must still
+        // get the ones it has, otherwise no tile icon ever receives a colour context.
         for ((name, methodName) in listOf(
             "com.oplus.systemui.qs.tileimpl.OplusQSIconViewImpl" to "onIconTintUpdate",
             "com.oplus.systemui.plugins.qs.customize.view.tile.OplusQSIconView" to "onIconTintUpdate",
             "com.oplus.systemui.plugins.qs.customize.view.tile.OplusQSThreeStageLayout" to "getActiveIconColor",
-        )) r.type(name).declaredMethods.filter { it.name == methodName }.forEach { method ->
-            method.isAccessible = true
-            r.hook("qs-appearance:icon-scope:$name:$method", method) { chain ->
-                val previous = iconContext.get()
-                val view = chain.thisObject as? View
-                if (view != null) {
-                    iconContext.set(view.context)
-                    if (method.parameterCount == 0 && method.returnType == Void.TYPE) synchronized(icons) { icons[view] = method }
+        )) {
+            val type = runCatching { r.type(name) }.getOrNull() ?: continue
+            type.declaredMethods.filter { it.name == methodName }.forEach { method ->
+                method.isAccessible = true
+                r.hook("qs-appearance:icon-scope:$name:$method", method) { chain ->
+                    val previous = iconContext.get()
+                    val view = chain.thisObject as? View
+                    if (view != null) {
+                        iconContext.set(view.context)
+                        if (method.parameterCount == 0 && method.returnType == Void.TYPE) synchronized(icons) { icons[view] = method }
+                    }
+                    try { chain.proceed() } finally {
+                        if (previous == null) iconContext.remove() else iconContext.set(previous)
+                    }
                 }
-                try { chain.proceed() } finally {
-                    if (previous == null) iconContext.remove() else iconContext.set(previous)
-                }
+                r.module.deoptimize(method)
             }
-            r.module.deoptimize(method)
         }
         // ColorOS 15 ships neither QSIconViewProxy nor QSLottieAnimationView. The icon-state and
         // icon-scope hooks above still apply there; the rest of the tinting needs those classes.
