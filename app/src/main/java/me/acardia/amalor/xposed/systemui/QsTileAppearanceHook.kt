@@ -1144,24 +1144,28 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             }
         }
         r.module.deoptimize(switcher)
-        val label = r.type("com.oplus.systemui.plugins.qs.customize.view.tile.QsLabelView")
-        val text = label.getDeclaredMethod("getTextView")
-        val update = label.getDeclaredMethod("updateColor", Int::class.javaPrimitiveType,
-            Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
-        r.hook("qs-appearance:highlight-title-label", update) { chain ->
-            chain.proceed().also {
-                val view = chain.thisObject as View
-                val root = owner(view)
-                if (r.enabled(key) && root != null) {
-                    val target = text.invoke(view) as TextView
-                    target.setTextColor(titleColor(root))
-                    remember(target, root)
+        // QsLabelView is a ColorOS 17 class; the switch and label hooks above still apply here.
+        runCatching {
+            val label = r.type("com.oplus.systemui.plugins.qs.customize.view.tile.QsLabelView")
+            val text = label.getDeclaredMethod("getTextView")
+            val update = label.getDeclaredMethod("updateColor", Int::class.javaPrimitiveType,
+                Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
+            r.hook("qs-appearance:highlight-title-label", update) { chain ->
+                chain.proceed().also {
+                    val view = chain.thisObject as View
+                    val root = owner(view)
+                    if (r.enabled(key) && root != null) {
+                        val target = text.invoke(view) as TextView
+                        target.setTextColor(titleColor(root))
+                        remember(target, root)
+                    }
                 }
             }
+            r.module.deoptimize(update)
         }
-        r.module.deoptimize(update)
-        val resize = r.type("com.oplus.systemui.plugins.qs.customize.view.tile.OplusQSResizeableTileView")
-        val labelView = r.field(resize, "labelView")
+        val resize = runCatching {
+            r.type("com.oplus.systemui.plugins.qs.customize.view.tile.OplusQSResizeableTileView")
+        }.getOrNull()
         val state = r.type("com.android.systemui.plugins.qs.QSTile\$State")
         fun tintLabel(view: View, root: View) {
             if (view is TextView) {
@@ -1172,12 +1176,18 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             }
             if (view is ViewGroup) for (index in 0 until view.childCount) tintLabel(view.getChildAt(index), root)
         }
+        val resizeName = resize?.name ?: return
+        val labelView = runCatching { r.field(requireNotNull(resize), "labelView") }.getOrNull()
         for (suffix in listOf("OneXOne", "TwoXOne", "TwoXTwo")) {
-            val method = r.type("${resize.name}$suffix").getDeclaredMethod("handleTileStateChange", state)
+            val method = runCatching {
+                r.type("$resizeName$suffix").getDeclaredMethod("handleTileStateChange", state)
+            }.getOrNull() ?: continue
             r.hook("qs-appearance:tile-label-bound:$suffix", method) { chain ->
                 chain.proceed().also {
                     val root = chain.thisObject as View
-                    if (r.enabled(key)) (labelView.get(root) as? View)?.let { tintLabel(it, root) }
+                    if (r.enabled(key)) labelView?.let {
+                        (it.get(root) as? View)?.let { label -> tintLabel(label, root) }
+                    }
                 }
             }
             r.module.deoptimize(method)

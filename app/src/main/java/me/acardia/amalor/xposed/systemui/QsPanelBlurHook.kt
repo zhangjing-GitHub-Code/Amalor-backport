@@ -252,20 +252,21 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 // notification shade and stays at 1.0 while that is open. Falling back to it
                 // applied full blur to a collapsed QS and made the radius jump between the two
                 // sources during a transition.
-                val separateActive = separateRatio > 0f
-                // Prefer the value the shade pushes every frame. The separate-QS params only
-                // apply in the split layout and getInterpolatedFraction is a scrim alpha curve,
-                // so neither tracks the panel while it moves.
-                // The shade fraction stays at 1.0 for the whole drag, so it cannot drive the
-                // radius; the QS section fraction is what actually changes while the user drags
-                // between the two panels. Fall back to the shade value only when it is absent.
+                // Use one continuous source for the whole transition. separateQsFraction reads
+                // either near zero or exactly one, so letting it win made the radius jump between
+                // the two extremes while the user dragged between the panels.
                 val rawRatio = when {
-                    separateActive -> separateRatio
                     qsExpansionNow > 0f -> qsExpansionNow
+                    separateRatio > 0f && separateRatio < 1f -> separateRatio
                     rawExpansionNow > 0f && rawExpansionNow < 1f -> rawExpansionNow
                     view != null && amountView.get() === view -> panelAmount
                     controller != null -> (fraction.invoke(controller) as Number).toFloat().coerceIn(0f, 1f)
                     else -> 0f
+                }
+                if (ratioProbe < 15) {
+                    ratioProbe++
+                    r.info("QS blur: ratio qs=" + qsExpansionNow + " separate=" + separateRatio +
+                        " raw=" + rawExpansionNow + " chosen=" + rawRatio)
                 }
 
                 // Switching between the notification centre and the control centre briefly
