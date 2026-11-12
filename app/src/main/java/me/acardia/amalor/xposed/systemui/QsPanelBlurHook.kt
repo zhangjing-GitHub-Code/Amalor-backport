@@ -34,6 +34,8 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
     private var lastRatio = 0f
     /** Previous frame's blur radius, used to ease out discontinuities between panel sources. */
     private var lastPixels = -1f
+    /** Number of ratio samples already logged. */
+    private var ratioProbe = 0
     private var panelColor: Int? = null
     private var amountView = WeakReference<View>(null)
     private var panelAmount = 0f

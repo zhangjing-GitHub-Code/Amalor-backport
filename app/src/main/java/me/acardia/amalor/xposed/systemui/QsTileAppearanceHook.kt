@@ -83,6 +83,8 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
     private var nativeTileFlags = false
     /** Debug keys already logged while inspecting tile states. */
     private val stateProbe = mutableSetOf<String>()
+    /** Debug keys already logged for the icon tint writer. */
+    private val iconTintProbe = mutableSetOf<String>()
 
     internal data class Colors(
         val active: Int, val onActive: Int, val inactive: Int, val inactiveIcon: Int,
