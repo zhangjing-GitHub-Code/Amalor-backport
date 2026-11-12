@@ -1171,9 +1171,17 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             val label = r.field(tileView, "mLabel")
             val second = runCatching { r.field(tileView, "mSecondLine") }.getOrNull()
             val stateType = r.type("com.android.systemui.plugins.qs.QSTile\$State")
+            var painted = 0
             fun paintLabels(owner: Any) {
                 val context = (label.get(owner) as? View)?.context ?: return
                 val palette = colors(context)
+                if (painted < 3) {
+                    painted++
+                    r.info("QS label: owner=" + owner.javaClass.simpleName +
+                        " text=" + (label.get(owner) as? TextView)?.text +
+                        " was=%08x now=%08x".format((label.get(owner) as? TextView)?.currentTextColor ?: 0,
+                            palette.onInactive))
+                }
                 (label.get(owner) as? TextView)?.let {
                     if (it.currentTextColor != palette.onInactive) it.setTextColor(palette.onInactive)
                 }
@@ -1183,12 +1191,14 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
                     }
                 }
             }
+            var hooked = 0
             for (name in listOf("handleStateChanged", "onAttachedToWindow")) {
                 tileView.declaredMethods.filter {
                     it.name == name && (it.parameterCount == 0 ||
                         (it.parameterCount == 1 && it.parameterTypes[0] == stateType))
                 }.forEach { method ->
                     method.isAccessible = true
+                    hooked++
                     r.hook("qs-appearance:tile-label:$name", method) { chain ->
                         chain.proceed().also {
                             if (r.enabled(key)) runCatching { paintLabels(it) }
@@ -1198,6 +1208,8 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
                     r.module.deoptimize(method)
                 }
             }
+            r.info("QS appearance: OplusQSTileView label hooks=" + hooked +
+                " second=" + (second != null))
         }.onFailure {
             if (it.absentTarget() == null) throw it
             r.info("QS appearance: OplusQSTileView label hook absent")
