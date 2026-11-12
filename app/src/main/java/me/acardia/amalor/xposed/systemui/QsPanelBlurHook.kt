@@ -228,9 +228,18 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                     (root.get(it) as? View)?.rootView === view.rootView
                 }
                 val separateRatio = separateQsFraction(controller)
-                val rawRatio = if (separateRatio > 0f) separateRatio
+                // A separate QS reports its own expansion; the panel fraction belongs to the
+                // notification shade and stays at 1.0 while that is open. Falling back to it
+                // applied full blur to a collapsed QS and made the radius jump between the two
+                // sources during a transition.
+                val separateActive = separateRatio > 0f
+                val rawRatio = if (separateActive) separateRatio
                     else if (view != null && amountView.get() === view) panelAmount
                     else if (controller != null) (fraction.invoke(controller) as Number).toFloat().coerceIn(0f, 1f) else 0f
+                if (frameReported.add("ratio-source")) {
+                    r.debug("QS blur: ratio source separate=$separateActive separateQs=$separateRatio " +
+                        "amount=${view != null && amountView.get() === view} raw=$rawRatio")
+                }
                 // Switching between the notification centre and the control centre briefly
                 // reports a near-zero fraction on one of the two sources, and the fallback
                 // chain then picks a different source that disagrees by an order of magnitude.
