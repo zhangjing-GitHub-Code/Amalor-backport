@@ -32,6 +32,8 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
     private var tintFraction = 0f
     /** Previous frame's expansion ratio, used to bridge a transient drop between panel sources. */
     private var lastRatio = 0f
+    /** Previous frame's blur radius, used to ease out discontinuities between panel sources. */
+    private var lastPixels = -1f
     private var panelColor: Int? = null
     private var amountView = WeakReference<View>(null)
     private var panelAmount = 0f
@@ -199,6 +201,7 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                     activeBlur = null
                     tintFraction = 0f
                     lastRatio = 0f
+                    lastPixels = -1f
                     panelColor = null
                 }
             }
@@ -287,7 +290,13 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 // maximum instead of the vendor BlurUtils window-radius configuration.
                 val brightness = (mirrorRatio.invoke(mirror.get(host)) as Number).toFloat().coerceIn(0f, 1f)
                 val maximum = 34f * view.resources.displayMetrics.density
-                val pixels = ((1f + (maximum - 1f) * ratio) * (1f - brightness)).roundToInt()
+                val target = (1f + (maximum - 1f) * ratio) * (1f - brightness)
+                // Between the two panels the expansion sources alternate and a single frame can
+                // disagree with its neighbour by an order of magnitude. Jumping straight to that
+                // value resizes the blur mid-transition, which reads as a flash of the window
+                // behind. Ease towards the target instead so one bad frame cannot show through.
+                val pixels = if (lastPixels < 0f) target.roundToInt()
+                    else (lastPixels + (target - lastPixels) * 0.34f).roundToInt()
                 if (pixels <= 0) { clear(); return@runCatching }
                 if (activeRoot != null && activeRoot !== target) clear()
                 val panelProxy = getProxy.invoke(getExt.invoke(view))
@@ -311,6 +320,7 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 if (activeView.get() !== view) activeView = WeakReference(view)
                 tintFraction = nextFraction
                 lastRatio = ratio
+                lastPixels = pixels.toFloat()
                 panelColor = nextColor
                 if (repaint) view.invalidate()
                 if (firstFrame) {
