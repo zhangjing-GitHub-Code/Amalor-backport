@@ -30,6 +30,8 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
     private var activeProxy: Any? = null
     private var nativeProxyEnabled = false
     private var tintFraction = 0f
+    /** Previous frame's expansion ratio, used to bridge a transient drop between panel sources. */
+    private var lastRatio = 0f
     private var panelColor: Int? = null
     private var amountView = WeakReference<View>(null)
     private var panelAmount = 0f
@@ -196,6 +198,7 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                     activeRoot = null
                     activeBlur = null
                     tintFraction = 0f
+                    lastRatio = 0f
                     panelColor = null
                 }
             }
@@ -221,9 +224,14 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                     (root.get(it) as? View)?.rootView === view.rootView
                 }
                 val separateRatio = separateQsFraction(controller)
-                val ratio = if (separateRatio > 0f) separateRatio
+                val rawRatio = if (separateRatio > 0f) separateRatio
                     else if (view != null && amountView.get() === view) panelAmount
                     else if (controller != null) (fraction.invoke(controller) as Number).toFloat().coerceIn(0f, 1f) else 0f
+                // Switching between the notification centre and the control centre briefly
+                // reports a near-zero fraction on one of the two sources. Taking that value
+                // would shrink the blur mid-transition and expose the window behind, so keep
+                // the previous ratio until the new one catches up.
+                val ratio = if (rawRatio < lastRatio * 0.34f && lastRatio > 0.5f) lastRatio else rawRatio
                 val qsShowing = view != null &&
                     QsAppearanceRules.panelVisible(view.isAttachedToWindow, view.windowVisibility == View.VISIBLE,
                         (rawExpansion.invoke(controller) as Number).toFloat(), qsVisible.invoke(controller) == true, separateRatio)
@@ -283,6 +291,7 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 activeBlur = helper
                 if (activeView.get() !== view) activeView = WeakReference(view)
                 tintFraction = nextFraction
+                lastRatio = ratio
                 panelColor = nextColor
                 if (repaint) view.invalidate()
                 if (firstFrame) {

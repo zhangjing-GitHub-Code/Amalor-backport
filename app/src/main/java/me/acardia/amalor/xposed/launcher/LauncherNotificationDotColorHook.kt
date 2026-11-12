@@ -204,7 +204,17 @@ internal class LauncherNotificationDotColorHook(private val r: LauncherIconRunti
     private fun drawingColors(host: Any?): LauncherBadgeColors? {
         val source = drawingSource.get()
         val cached = if (source != null) entry(source.bitmap, source.host) else (host as? View)?.let(::hostEntry)
-        val palette = synchronized(bitmapPalettes) { cached?.palette }
+        var palette = synchronized(bitmapPalettes) { cached?.palette }
+        if (palette == null && source?.bitmap != null) {
+            // The first draw of a folder cell happens before the worker finishes sampling, and
+            // its host view is not added to waitingViews, so nothing would repaint it later.
+            // Sampling a 32px thumbnail inline is cheap enough to do once here.
+            palette = runCatching { extractPalette(source.bitmap) }.getOrNull()
+            if (palette != null) synchronized(bitmapPalettes) { cached?.palette = palette }
+            if (bigFolderProbe.add("inline-palette")) {
+                r.info("dot-color: inline palette for big-folder bitmap=${palette != null}")
+            }
+        }
         if (palette == null) {
             if (bigFolderProbe.add("no-palette")) {
                 r.info("dot-color: no palette (source=${source != null} cached=${cached != null} host=${host != null})")
