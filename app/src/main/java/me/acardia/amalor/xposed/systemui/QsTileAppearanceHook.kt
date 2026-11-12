@@ -1163,53 +1163,44 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             }
             r.module.deoptimize(update)
         }
-        // Ordinary tiles are OplusQSTileView, not the highlight view: their labels are tinted in
-        // handleStateChanged by passing a ColorStateList to TextView.setTextColor, so the label
-        // hooks above never reached them.
+        // Ordinary tiles are OplusQSTileView. Their label colours are not constants: every
+        // state change runs updateTextColor(int), which rewrites four ColorStateList fields and
+        // assigns R.color.white to two of them whenever the tile needs a light label. Replacing
+        // those fields after it runs is the only place that survives the next state change.
         runCatching {
             val tileView = r.type("com.oplus.systemui.plugins.qs.tile.OplusQSTileView")
-            val label = r.field(tileView, "mLabel")
-            val second = runCatching { r.field(tileView, "mSecondLine") }.getOrNull()
-            val stateType = r.type("com.android.systemui.plugins.qs.QSTile\$State")
-            var painted = 0
-            fun paintLabels(owner: Any) {
-                val context = (label.get(owner) as? View)?.context ?: return
-                val palette = colors(context)
-                if (painted < 3) {
-                    painted++
-                    r.info("QS label: owner=" + owner.javaClass.simpleName +
-                        " text=" + (label.get(owner) as? TextView)?.text +
-                        " was=%08x now=%08x".format((label.get(owner) as? TextView)?.currentTextColor ?: 0,
-                            palette.onInactive))
-                }
-                (label.get(owner) as? TextView)?.let {
-                    if (it.currentTextColor != palette.onInactive) it.setTextColor(palette.onInactive)
-                }
-                second?.let { field ->
-                    (field.get(owner) as? TextView)?.let {
-                        if (it.currentTextColor != palette.onSecondary) it.setTextColor(palette.onSecondary)
-                    }
-                }
-            }
-            var hooked = 0
-            for (name in listOf("handleStateChanged", "onAttachedToWindow")) {
-                tileView.declaredMethods.filter {
-                    it.name == name && (it.parameterCount == 0 ||
-                        (it.parameterCount == 1 && it.parameterTypes[0] == stateType))
-                }.forEach { method ->
-                    method.isAccessible = true
-                    hooked++
-                    r.hook("qs-appearance:tile-label:$name", method) { chain ->
-                        chain.proceed().also {
-                            if (r.enabled(key)) runCatching { paintLabels(it) }
-                                .onFailure { fallback("tile label", it) }
+            val update = tileView.declaredMethods.firstOrNull {
+                it.name == "updateTextColor" && it.parameterCount == 1 &&
+                    it.parameterTypes[0] == Int::class.javaPrimitiveType
+            } ?: return@runCatching
+            update.isAccessible = true
+            val labelDefault = r.field(tileView, "mColorLabelDefault")
+            val labelUnavailable = runCatching { r.field(tileView, "mColorLabelUnavailable") }.getOrNull()
+            val secondDefault = runCatching { r.field(tileView, "mColorSecondLabelDefault") }.getOrNull()
+            val secondUnavailable = runCatching { r.field(tileView, "mColorSecondLabelUnavailable") }.getOrNull()
+            r.hook("qs-appearance:tile-label-colors", update) { chain ->
+                // updateTextColor returns void, so the tile view comes from the hook target.
+                chain.proceed().also {
+                    if (!r.enabled(key)) return@also
+                    runCatching {
+                        val owner = chain.thisObject ?: return@runCatching
+                        val view = owner as? View ?: return@runCatching
+                        val palette = colors(view.context)
+                        val label = ColorStateList.valueOf(palette.onInactive)
+                        val second = ColorStateList.valueOf(palette.onSecondary)
+                        labelDefault.set(owner, label)
+                        labelUnavailable?.set(owner, ColorStateList.valueOf(palette.disabledIcon))
+                        secondDefault?.set(owner, second)
+                        secondUnavailable?.set(owner, ColorStateList.valueOf(palette.disabledIcon))
+                        if (stateProbe.add("label-colors")) {
+                            r.info("QS label: replaced CSL onInactive=%08x onSecondary=%08x"
+                                .format(palette.onInactive, palette.onSecondary))
                         }
-                    }
-                    r.module.deoptimize(method)
+                    }.onFailure { fallback("tile label colors", it) }
                 }
             }
-            r.info("QS appearance: OplusQSTileView label hooks=" + hooked +
-                " second=" + (second != null))
+            r.module.deoptimize(update)
+            r.info("QS appearance: installed tile label colour writer")
         }.onFailure {
             if (it.absentTarget() == null) throw it
             r.info("QS appearance: OplusQSTileView label hook absent")
