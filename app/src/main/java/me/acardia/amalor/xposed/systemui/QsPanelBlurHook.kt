@@ -38,6 +38,8 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
     private var ratioProbe = 0
     /** Latest shade expansion reported by setRawPanelExpansionFraction, updated every frame. */
     private var rawExpansionNow = 0f
+    /** Number of raw expansion samples already logged. */
+    private var rawProbe = 0
     private var panelColor: Int? = null
     private var amountView = WeakReference<View>(null)
     private var panelAmount = 0f
@@ -412,6 +414,10 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
             // This is the authoritative per-frame shade expansion. The scrim alpha curve and the
             // separate-QS params are not, which is why they read as zero while the panel moves.
             rawExpansionNow = (chain.getArg(0) as? Float)?.coerceIn(0f, 1f) ?: rawExpansionNow
+            if (rawProbe < 15) {
+                rawProbe++
+                r.info("QS blur: rawExpansion=" + rawExpansionNow)
+            }
             chain.proceed().also { scrim = WeakReference(chain.thisObject); schedule() }
         }
         val shade = r.type("com.android.systemui.shade.NotificationPanelViewController")

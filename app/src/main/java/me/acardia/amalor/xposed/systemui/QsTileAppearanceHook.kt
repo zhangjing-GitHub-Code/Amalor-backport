@@ -1993,7 +1993,23 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
                 return@runCatching
             }
             paint.isAccessible = true
-            r.info("QS appearance: installed tile icon tint writer")
+            r.info("QS appearance: installed tile icon tint writer (QSIconViewImpl.setTint)")
+            // The colour writer may never run when the tile state does not change, so also
+            // observe the icon entry point to tell "not called" from "called but overridden".
+            val setIcon = runCatching {
+                r.type("com.oplus.systemui.qs.tileimpl.OplusQSIconViewImpl").declaredMethods.firstOrNull {
+                    it.name == "setIcon" && it.parameterCount == 3 &&
+                        it.parameterTypes[0] == ImageView::class.java
+                }
+            }.getOrNull()
+            if (setIcon != null) {
+                setIcon.isAccessible = true
+                r.hook("qs-appearance:icon-set", setIcon) { chain ->
+                    if (iconTintProbe.add("setIcon")) r.info("QS appearance: setIcon called")
+                    chain.proceed()
+                }
+                r.module.deoptimize(setIcon)
+            }
             r.hook("qs-appearance:icon-tint-writer", paint) { chain ->
                 if (iconTintProbe.add("called")) r.info("QS appearance: setTint called")
                 val result = chain.proceed()
