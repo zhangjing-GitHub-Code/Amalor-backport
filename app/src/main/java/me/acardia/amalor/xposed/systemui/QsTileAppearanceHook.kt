@@ -1986,8 +1986,12 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
                 it.name == "updateIconTintColor" && it.parameterCount == 3 &&
                     it.parameterTypes[0] == ImageView::class.java &&
                     it.parameterTypes[1] == Int::class.javaPrimitiveType
-            } ?: return@runCatching
+            } ?: run {
+                r.info("QS appearance: updateIconTintColor not found on the icon view")
+                return@runCatching
+            }
             paint.isAccessible = true
+            r.info("QS appearance: installed tile icon tint writer")
             r.hook("qs-appearance:icon-tint-writer", paint) { chain ->
                 val result = chain.proceed()
                 val image = chain.getArg(0) as? ImageView

@@ -201,7 +201,8 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                     activeBlur = null
                     tintFraction = 0f
                     lastRatio = 0f
-                    lastPixels = -1f
+                    // lastPixels is deliberately kept: the next apply eases from the radius the
+                    // panel had before it was released, instead of jumping from zero.
                     panelColor = null
                 }
             }
