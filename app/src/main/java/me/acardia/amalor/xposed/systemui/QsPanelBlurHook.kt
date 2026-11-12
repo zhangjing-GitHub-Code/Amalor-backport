@@ -271,52 +271,25 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                     }.getOrDefault(qsExpansionNow)
                 }
                 val separateRatio = separateQsFraction(controller)
-                // A separate QS reports its own expansion; the panel fraction belongs to the
-                // notification shade and stays at 1.0 while that is open. Falling back to it
-                // applied full blur to a collapsed QS and made the radius jump between the two
-                // sources during a transition.
-                // Use one continuous source for the whole transition. separateQsFraction reads
-                // either near zero or exactly one, so letting it win made the radius jump between
-                // the two extremes while the user dragged between the panels.
-                // qsExpansion is the QS section itself and is the only continuously varying
-                // source. rawExpansion only says the shade is open, and the separate-QS value
-                // is written at the endpoints, so both are fallbacks rather than drivers.
-                val rawRatio = when {
-                    shadeFractionNow > 0f -> shadeFractionNow
-                    qsExpansionNow > 0f -> qsExpansionNow
-                    separateRatio > 0f -> separateRatio
-                    rawExpansionNow > 0f -> rawExpansionNow
-                    view != null && amountView.get() === view -> panelAmount
-                    controller != null -> (fraction.invoke(controller) as Number).toFloat().coerceIn(0f, 1f)
-                    else -> 0f
-                }
-                if (ratioProbe < 15) {
-                    ratioProbe++
-                    r.info("QS blur: ratio qs=" + qsExpansionNow + " separate=" + separateRatio +
-                        " raw=" + rawExpansionNow + " chosen=" + rawRatio +
-                        " shade=" + shadeFractionNow +
-                        " qsField=" + (qsExpansionField != null) +
-                        " controller=" + (controller != null))
-                }
-
-                // Switching between the notification centre and the control centre briefly
-                // reports a near-zero fraction on one of the two sources, and the fallback
-                // chain then picks a different source that disagrees by an order of magnitude.
-                // Recomputing from that value resizes the blur mid-transition, so skip the
-                // frame and leave the radius as it is.
-                val jump = lastRatio > 0.35f && rawRatio < lastRatio * 0.35f
-                if (jump && activeRoot != null) {
-                    if (frameReported.add("ratio-jump")) {
-                        r.debug("QS blur: ratio jump " + lastRatio + " -> " + rawRatio + ", keeping radius")
-                    }
-                    return@runCatching
-                }
-                val ratio = rawRatio
                 val qsShowing = view != null &&
                     QsAppearanceRules.panelVisible(view.isAttachedToWindow, view.windowVisibility == View.VISIBLE,
-                        (rawExpansion.invoke(controller) as Number).toFloat(), qsVisible.invoke(controller) == true, separateRatio)
+                        (rawExpansion.invoke(controller) as Number).toFloat(),
+                        qsVisible.invoke(controller) == true, separateRatio)
+                // Every available expansion source reports only its endpoints on this ROM: the shade
+                // fraction snaps between 0 and 1, the scrim fields hold 0, and the separate-QS
+                // fraction jumps between 1.0 and single-digit thousandths within adjacent frames.
+                // Driving the radius from those resizes the blur every frame, which reads as a flash
+                // of the window behind. Use the stable visible state as the target and let the
+                // easing below produce the fade instead.
+                val ratio = if (qsShowing) 1f else 0f
+                if (ratioProbe < 6) {
+                    ratioProbe++
+                    r.info("QS blur: ratio qs=" + qsExpansionNow + " separate=" + separateRatio +
+                        " raw=" + rawExpansionNow + " shade=" + shadeFractionNow +
+                        " showing=" + qsShowing + " controller=" + (controller != null))
+                }
                 val allowed = r.enabled(NativeFeatureOptions.QS_TILE_NATIVE_APPEARANCE) && view != null &&
-                    host != null && ratio > 0f && qsShowing &&
+                    host != null && qsShowing &&
                     !isCovered(view) &&
                     // The OEM gate only accepts SHADE (0). Visible QS on KEYGUARD/SHADE_LOCKED
                     // uses the same material, while doze and the unlock fade still relinquish it.
