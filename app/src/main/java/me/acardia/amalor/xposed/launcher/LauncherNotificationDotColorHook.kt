@@ -59,6 +59,9 @@ internal class LauncherNotificationDotColorHook(private val r: LauncherIconRunti
 
     private data class IconSource(val bitmap: Bitmap?, val host: View?)
 
+    /** Set while drawing a cell that has no single owning app, such as a stacked folder cell. */
+    private val skipTint = ThreadLocal<Boolean>()
+
     fun install() {
         r.install("dot-color:badge-binding", key) {
             for (name in listOf(bubbleType.name, "com.android.launcher3.OplusBubbleTextView")) {
@@ -151,8 +154,19 @@ internal class LauncherNotificationDotColorHook(private val r: LauncherIconRunti
             it.name == "drawDotIfNecessary" && it.parameterCount == 2 &&
                 !List::class.java.isAssignableFrom(it.parameterTypes[1])
         }?.let { drawDot ->
+            val stackedType = runCatching {
+                r.type("com.android.launcher3.folder.big.stacked.BFPreviewItemDrawingParams")
+            }.getOrNull()
             sourceScope("dot-color:big-folder-source", drawDot) { chain ->
                 val params = chain.getArg(1) ?: return@sourceScope null
+                // A stacked cell draws one dot for the whole pile: the system aggregates every
+                // badge in the folder into a single StackedDotInfo and shows one dot. params.item
+                // is only the first stacked entry, so tinting by it would attribute that dot to
+                // an app it does not belong to. Leave those cells on the system colour.
+                if (stackedType?.isInstance(params) == true) {
+                    if (bigFolderProbe.add("stacked")) r.info("dot-color: stacked cell left untinted")
+                    return@sourceScope null
+                }
                 val item = r.get(params, "item")
                 val host = r.get(requireNotNull(chain.getThisObject()), "mIcon") as? View
                 if (bigFolderProbe.add("source")) {
@@ -181,8 +195,12 @@ internal class LauncherNotificationDotColorHook(private val r: LauncherIconRunti
             val previous = drawingSource.get()
             // Resolve provenance here; enqueue work only if a badge is actually drawn inside.
             // An empty folder source must not borrow the last unrelated drawDotView.
-            drawingSource.set(runCatching { source(chain) }.onFailure { r.failure(name, it) }.getOrNull() ?: emptySource)
+            val resolved = runCatching { source(chain) }.onFailure { r.failure(name, it) }.getOrNull()
+            // A null result means this draw has no single owning app, so nothing is tinted.
+            drawingSource.set(resolved ?: emptySource)
+            if (resolved == null) skipTint.set(true)
             try { chain.proceed() } finally {
+                skipTint.remove()
                 if (previous == null) drawingSource.remove() else drawingSource.set(previous)
             }
         }
@@ -202,6 +220,7 @@ internal class LauncherNotificationDotColorHook(private val r: LauncherIconRunti
     }
 
     private fun drawingColors(host: Any?): LauncherBadgeColors? {
+        if (skipTint.get() == true) return null
         val source = drawingSource.get()
         val cached = if (source != null) entry(source.bitmap, source.host) else (host as? View)?.let(::hostEntry)
         var palette = synchronized(bitmapPalettes) { cached?.palette }
