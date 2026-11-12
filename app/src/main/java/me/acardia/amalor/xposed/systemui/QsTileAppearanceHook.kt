@@ -1977,6 +1977,37 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
                 r.module.deoptimize(method)
             }
         }
+        // ColorOS 15 has no TileIconColorState and paints tile icons with a single
+        // ColorStateList.valueOf(int) per state, so the palette is applied at that writer.
+        // ColorOS 17 keeps its ColorStateList route above and never reaches this hook.
+        runCatching {
+            val iconView = r.type("com.oplus.systemui.qs.tileimpl.OplusQSIconViewImpl")
+            val paint = iconView.declaredMethods.firstOrNull {
+                it.name == "updateIconTintColor" && it.parameterCount == 3 &&
+                    it.parameterTypes[0] == ImageView::class.java &&
+                    it.parameterTypes[1] == Int::class.javaPrimitiveType
+            } ?: return@runCatching
+            paint.isAccessible = true
+            r.hook("qs-appearance:icon-tint-writer", paint) { chain ->
+                val result = chain.proceed()
+                val image = chain.getArg(0) as? ImageView
+                val tileState = chain.getArg(1) as? Int
+                if (image != null && tileState != null && r.enabled(key)) runCatching {
+                    val palette = colors(image.context)
+                    val color = when {
+                        QsAppearanceRules.unavailableTile(tileState, false, false) -> palette.disabledIcon
+                        tileState == 2 -> palette.onActive
+                        else -> palette.onInactive
+                    }
+                    image.imageTintList = ColorStateList.valueOf(color)
+                }.onFailure { fallback("icon tint writer", it) }
+                result
+            }
+            r.module.deoptimize(paint)
+        }.onFailure {
+            if (it.absentTarget() == null) throw it
+            r.info("QS appearance: icon tint writer absent")
+        }
         // ColorOS 15 ships neither QSIconViewProxy nor QSLottieAnimationView. The icon-state and
         // icon-scope hooks above still apply there; the rest of the tinting needs those classes.
         if (runCatching { r.type("com.oplus.systemui.qs.base.res.widget.QSIconViewProxy") }.isFailure ||

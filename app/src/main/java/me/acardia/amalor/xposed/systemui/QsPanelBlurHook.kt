@@ -290,13 +290,13 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 // maximum instead of the vendor BlurUtils window-radius configuration.
                 val brightness = (mirrorRatio.invoke(mirror.get(host)) as Number).toFloat().coerceIn(0f, 1f)
                 val maximum = 34f * view.resources.displayMetrics.density
-                val target = (1f + (maximum - 1f) * ratio) * (1f - brightness)
+                val targetRadius = (1f + (maximum - 1f) * ratio) * (1f - brightness)
                 // Between the two panels the expansion sources alternate and a single frame can
                 // disagree with its neighbour by an order of magnitude. Jumping straight to that
                 // value resizes the blur mid-transition, which reads as a flash of the window
-                // behind. Ease towards the target instead so one bad frame cannot show through.
-                val pixels = if (lastPixels < 0f) target.roundToInt()
-                    else (lastPixels + (target - lastPixels) * 0.34f).roundToInt()
+                // behind. Ease towards it instead so one bad frame cannot show through.
+                val pixels = if (lastPixels < 0f) targetRadius.roundToInt()
+                    else (lastPixels + (targetRadius - lastPixels) * 0.34f).roundToInt()
                 if (pixels <= 0) { clear(); return@runCatching }
                 if (activeRoot != null && activeRoot !== target) clear()
                 val panelProxy = getProxy.invoke(getExt.invoke(view))
