@@ -241,9 +241,10 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 }
                 // Read the QS section fraction here: it changes during a drag, unlike the shade
                 // fraction which stays at 1.0 once the panel is open.
-                if (qsExpansionField != null && controller != null) {
+                val qsField = qsExpansionField
+                if (qsField != null && controller != null) {
                     qsExpansionNow = runCatching {
-                        (qsExpansionField.getFloat(controller) as Float).coerceIn(0f, 1f)
+                        (qsField.getFloat(controller) as Float).coerceIn(0f, 1f)
                     }.getOrDefault(qsExpansionNow)
                 }
                 val separateRatio = separateQsFraction(controller)
@@ -328,7 +329,9 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 // The brightness mirror spring parks the wallpaper blur while the brightness
                 // slider mirror is showing. It is not an animation progress and is unrelated to
                 // panel dragging, so only let it pull the radius down while the mirror is up.
-                val mirrorVisible = runCatching { mirrorVisibleField.getBoolean(host) }.getOrDefault(false)
+                val mirrorVisible = mirrorVisibleField?.let {
+                    runCatching { it.getBoolean(host) }.getOrDefault(false)
+                } ?: false
                 val brightness = if (mirrorVisible)
                     (mirrorRatio.invoke(mirror.get(host)) as Number).toFloat().coerceIn(0f, 1f) else 0f
                 if (ratioProbe < 15) {
