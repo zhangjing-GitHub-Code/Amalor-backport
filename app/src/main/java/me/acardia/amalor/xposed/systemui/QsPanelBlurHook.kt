@@ -38,6 +38,8 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
     private var ratioProbe = 0
     /** Latest shade expansion reported by setRawPanelExpansionFraction, updated every frame. */
     private var rawExpansionNow = 0f
+    /** QS section expansion, which moves while the shade itself stays fully open. */
+    private var qsExpansionNow = 0f
     /** Number of raw expansion samples already logged. */
     private var rawProbe = 0
     private var panelColor: Int? = null
@@ -103,6 +105,7 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
         val launchDisabled = renamed(depth, "getBlursDisabledForAppLaunch", "getAreBlursDisabledForAppLaunch")
         val unlockDisabled = depth.getDeclaredMethod("getBlursDisabledForUnlock")
         val mirror = r.field(depth, "brightnessMirrorSpring")
+        val mirrorVisibleField = runCatching { r.field(depth, "brightnessMirrorVisible") }.getOrNull()
         val mirrorRatio = r.type("com.android.systemui.statusbar.NotificationShadeDepthController\$DepthAnimation")
             .getDeclaredMethod("getRatio")
         val blur = r.type("com.android.systemui.statusbar.BlurUtils")
@@ -123,6 +126,9 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
         val behind = r.field(scrimType, "mScrimBehind")
         val qsVisible = scrimType.getDeclaredMethod("getQsBottomVisible")
         val rawExpansion = scrimType.getDeclaredMethod("getRawPanelExpansionFraction")
+        // The shade's own expansion is 1.0 whenever the panel is open at all; the QS section has
+        // its own fraction that moves while the user drags inside it.
+        val qsExpansionField = runCatching { r.field(scrimType, "mQsExpansion") }.getOrNull()
         val fraction = scrimType.getDeclaredMethod("getInterpolatedFraction")
         val scrimExtension = r.field(scrimType, "mExt")
         val scrimExt = r.type("com.oplus.systemui.statusbar.phone.ScrimControllerExImp")
@@ -233,6 +239,13 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 val host = if (view == null) null else candidates.firstOrNull {
                     (root.get(it) as? View)?.rootView === view.rootView
                 }
+                // Read the QS section fraction here: it changes during a drag, unlike the shade
+                // fraction which stays at 1.0 once the panel is open.
+                if (qsExpansionField != null && controller != null) {
+                    qsExpansionNow = runCatching {
+                        (qsExpansionField.getFloat(controller) as Float).coerceIn(0f, 1f)
+                    }.getOrDefault(qsExpansionNow)
+                }
                 val separateRatio = separateQsFraction(controller)
                 // A separate QS reports its own expansion; the panel fraction belongs to the
                 // notification shade and stays at 1.0 while that is open. Falling back to it
@@ -242,20 +255,18 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 // Prefer the value the shade pushes every frame. The separate-QS params only
                 // apply in the split layout and getInterpolatedFraction is a scrim alpha curve,
                 // so neither tracks the panel while it moves.
+                // The shade fraction stays at 1.0 for the whole drag, so it cannot drive the
+                // radius; the QS section fraction is what actually changes while the user drags
+                // between the two panels. Fall back to the shade value only when it is absent.
                 val rawRatio = when {
                     separateActive -> separateRatio
-                    rawExpansionNow > 0f -> rawExpansionNow
+                    qsExpansionNow > 0f -> qsExpansionNow
+                    rawExpansionNow > 0f && rawExpansionNow < 1f -> rawExpansionNow
                     view != null && amountView.get() === view -> panelAmount
                     controller != null -> (fraction.invoke(controller) as Number).toFloat().coerceIn(0f, 1f)
                     else -> 0f
                 }
-                if (ratioProbe < 12) {
-                    ratioProbe++
-                    r.info("QS blur: ratio separate=" + separateActive + " separateQs=" + separateRatio +
-                        " amount=" + (view != null && amountView.get() === view) + " panelAmount=" + panelAmount +
-                        " fraction=" + (controller?.let { (fraction.invoke(it) as Number).toFloat() } ?: -1f) +
-                        " raw=" + rawRatio)
-                }
+
                 // Switching between the notification centre and the control centre briefly
                 // reports a near-zero fraction on one of the two sources, and the fallback
                 // chain then picks a different source that disagrees by an order of magnitude.
@@ -314,7 +325,15 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 val helper = blurUtils.get(host)
                 // Keep ColorOS expansion/lifecycle, but use the native 17 shade's 34dp blur
                 // maximum instead of the vendor BlurUtils window-radius configuration.
-                val brightness = (mirrorRatio.invoke(mirror.get(host)) as Number).toFloat().coerceIn(0f, 1f)
+                // The brightness mirror spring parks the wallpaper blur while the brightness
+                // slider mirror is showing. It is not an animation progress and is unrelated to
+                // panel dragging, so only let it pull the radius down while the mirror is up.
+                val mirrorVisible = runCatching { mirrorVisibleField.getBoolean(host) }.getOrDefault(false)
+                val brightness = if (mirrorVisible)
+                    (mirrorRatio.invoke(mirror.get(host)) as Number).toFloat().coerceIn(0f, 1f) else 0f
+                if (ratioProbe < 15) {
+                    r.info("QS blur: brightness=" + brightness + " ratio=" + ratio)
+                }
                 val maximum = 34f * view.resources.displayMetrics.density
                 val targetRadius = (1f + (maximum - 1f) * ratio) * (1f - brightness)
                 // Between the two panels the expansion sources alternate and a single frame can

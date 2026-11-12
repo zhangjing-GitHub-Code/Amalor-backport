@@ -2159,7 +2159,13 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
                 it.parameterTypes[0].name.endsWith("QsViewInfoProvider")
         }
         r.hook("qs-appearance:solid-tile-backgrounds", support) { chain ->
-            if (r.enabled(key)) false else chain.proceed()
+            if (!r.enabled(key)) return@hook chain.proceed()
+            // QsStaticViewInfoProvider extends QsViewInfoProvider, so a blanket false also turns
+            // the shade panel solid and makes its background flip between a blur drawable and a
+            // gradient mid-transition. Only the tile views should take the solid path.
+            val owner = chain.getArg(0)
+            if (owner != null && owner.javaClass.name.contains("Tile", ignoreCase = true)) false
+            else chain.proceed()
         }
         r.module.deoptimize(support)
         installSolidSliderTrack()
