@@ -1998,6 +1998,15 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
         val disabledByPolicy = r.field(proxy, "disabledByPolicy")
         fun proxyColor(owner: Any, ctx: Context): Int {
             val palette = colors(ctx)
+            if (stateProbe.add("proxy")) {
+                val host = iconHost.get(owner) as? View
+                val model = host?.let { tileStateOf?.invoke(it) }
+                r.info("QS proxy: host=" + (host != null) + " model=" + model?.state +
+                    " iconState=" + runCatching { iconState.getInt(owner) }.getOrNull() +
+                    " disabled=" + runCatching { disabledByPolicy.getBoolean(owner) }.getOrNull() +
+                    " onActive=%08x onInactive=%08x inactiveIcon=%08x"
+                        .format(palette.onActive, palette.onInactive, palette.inactiveIcon))
+            }
             (iconHost.get(owner) as? View)?.let { tileStateOf?.invoke(it) }?.let { state ->
                 return when {
                     QsAppearanceRules.unavailableTile(state.state, false, state.disabledByPolicy) -> palette.disabledIcon

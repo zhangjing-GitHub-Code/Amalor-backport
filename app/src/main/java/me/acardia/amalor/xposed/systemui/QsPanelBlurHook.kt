@@ -228,10 +228,18 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                     else if (view != null && amountView.get() === view) panelAmount
                     else if (controller != null) (fraction.invoke(controller) as Number).toFloat().coerceIn(0f, 1f) else 0f
                 // Switching between the notification centre and the control centre briefly
-                // reports a near-zero fraction on one of the two sources. Taking that value
-                // would shrink the blur mid-transition and expose the window behind, so keep
-                // the previous ratio until the new one catches up.
-                val ratio = if (rawRatio < lastRatio * 0.34f && lastRatio > 0.5f) lastRatio else rawRatio
+                // reports a near-zero fraction on one of the two sources, and the fallback
+                // chain then picks a different source that disagrees by an order of magnitude.
+                // Recomputing from that value resizes the blur mid-transition, so skip the
+                // frame and leave the radius as it is.
+                val jump = lastRatio > 0.35f && rawRatio < lastRatio * 0.35f
+                if (jump && activeRoot != null) {
+                    if (frameReported.add("ratio-jump")) {
+                        r.debug("QS blur: ratio jump " + lastRatio + " -> " + rawRatio + ", keeping radius")
+                    }
+                    return@runCatching
+                }
+                val ratio = rawRatio
                 val qsShowing = view != null &&
                     QsAppearanceRules.panelVisible(view.isAttachedToWindow, view.windowVisibility == View.VISIBLE,
                         (rawExpansion.invoke(controller) as Number).toFloat(), qsVisible.invoke(controller) == true, separateRatio)
