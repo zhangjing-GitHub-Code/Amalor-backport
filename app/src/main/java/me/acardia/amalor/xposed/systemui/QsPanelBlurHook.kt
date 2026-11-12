@@ -258,9 +258,20 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                     // A single frame outside the allowed window during a panel transition would
                     // otherwise drop the blur and show the window underneath. Only release it
                     // once the panel has actually left the visible range.
-                    val stillAnimating = activeRoot != null && controller != null && ratio > 0f &&
-                        (rawExpansion.invoke(controller) as Number).toFloat() > 0f
-                    if (!stillAnimating) clear()
+                    val rawExp = controller?.let { (rawExpansion.invoke(it) as Number).toFloat() } ?: 0f
+                    val stillAnimating = activeRoot != null && controller != null && ratio > 0f && rawExp > 0f
+                    if (!stillAnimating) {
+                        clear()
+                        if (frameReported.add("clear-reason")) {
+                            r.debug("QS blur: clear due to gate (view=" + (view != null) +
+                                " host=" + (host != null) + " ratio=" + ratio + " qsShowing=" + qsShowing +
+                                " rawExp=" + rawExp + " activeRoot=" + (activeRoot != null) +
+                                " ad=" + (host?.let { launchDisabled.invoke(it) } as? Boolean) +
+                                " ud=" + (host?.let { unlockDisabled.invoke(it) } as? Boolean) +
+                                " sup=" + supports.invoke(null) +
+                                " gauss=" + gaussDisabled.invoke(null))
+                        }
+                    }
                     if (frameReported.add("not-allowed")) {
                         r.debug("QS blur: frame not allowed (view=${view != null} host=${host != null} " +
                             "ratio=$ratio qsShowing=$qsShowing stillAnimating=$stillAnimating " +
