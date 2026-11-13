@@ -90,6 +90,7 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
         val active: Int, val onActive: Int, val inactive: Int, val inactiveIcon: Int,
         val onInactive: Int, val onSecondary: Int, val panel: Int, val disabled: Int, val disabledIcon: Int,
         val surfaceContainer: Int, val outlineVariant: Int, val secondaryContainer: Int,
+        val surfaceContainerHighest: Int,
         val outputTrack: Int, val outputProgress: Int,
     )
     private enum class SurfaceKind { Tile, HighlightCard, HighlightIcon, SelectedIndicator, Control, PrimaryControl, Detail, Media }
@@ -294,6 +295,7 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             disabled = ColorUtils.setAlphaComponent(role("system_surface"), 46),
             disabledIcon = ColorUtils.setAlphaComponent(role("system_on_surface_variant"), 97),
             surfaceContainer = role("system_surface_container"),
+            surfaceContainerHighest = role("system_surface_container_highest"),
             outlineVariant = role("system_outline_variant"),
             secondaryContainer = role("system_secondary_container"),
             outputTrack = outputTrack, outputProgress = outputProgress,
@@ -2291,7 +2293,11 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
                 if (!r.enabled(key)) return@hook chain.proceed()
                 val bar = chain.thisObject as? View ?: return@hook chain.proceed()
                 val palette = colors(bar.context)
-                chain.proceed(arrayOf<Any>(ColorStateList.valueOf(palette.inactive)))
+                // Material 3 puts the unfilled track on surfaceContainerHighest. The OEM default
+                // is a near transparent #0d000000 meant to sit over a blurred wallpaper; on the
+                // solid panel this module applies an opaque track is needed for the filled
+                // segment to read against it.
+                chain.proceed(arrayOf<Any>(ColorStateList.valueOf(palette.surfaceContainerHighest)))
             }
             r.module.deoptimize(setProgress)
             r.module.deoptimize(setBackground)

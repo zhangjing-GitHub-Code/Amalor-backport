@@ -303,8 +303,12 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                     // A single frame outside the allowed window during a panel transition would
                     // otherwise drop the blur and show the window underneath. Only release it
                     // once the panel has actually left the visible range.
+                    // ratio is binary now, so it cannot say whether the panel is still moving. Use
+                    // the raw expansion, which stays above zero for the whole collapse animation,
+                    // so releasing the blur waits until the last frame instead of snapping on the
+                    // first one where qsShowing turns false.
                     val rawExp = controller?.let { (rawExpansion.invoke(it) as Number).toFloat() } ?: 0f
-                    val stillAnimating = activeRoot != null && controller != null && ratio > 0f && rawExp > 0f
+                    val stillAnimating = activeRoot != null && controller != null && rawExp > 0.01f
                     if (!stillAnimating) {
                         clear()
                         if (frameReported.add("clear-reason")) {
