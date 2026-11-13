@@ -266,7 +266,11 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
         // ColorOS 15 has no shade_panel_bg_color. Falling back to the same role the
         // notification card uses made the panel and the cards indistinguishable, so the
         // panel takes the container below it instead.
-        val panelBg = namedColor("shade_panel_bg_color") ?: optionalRole("system_surface_container_low") ?: effect(1)
+        // ColorOS 17 layers this screen with three surface-effect roles: SE0 under the panel,
+        // SE1 for inactive tiles, SE2 for the icon circle. ColorOS 15 lacks all three, so the
+        // surface_container ladder stands in. The panel must take the darkest of the three,
+        // otherwise it lands on the same role as the tiles and they disappear into it.
+        val panelBg = namedColor("shade_panel_bg_color") ?: optionalRole("system_surface_container") ?: effect(0)
         val panelScrim = namedColor("shade_panel_scrim") ?: namedColor("shade_panel_scrim_color")
         val basePanel = if (panelScrim != null) ColorUtils.compositeColors(panelScrim, panelBg) else panelBg
         val primary = role("system_primary")
