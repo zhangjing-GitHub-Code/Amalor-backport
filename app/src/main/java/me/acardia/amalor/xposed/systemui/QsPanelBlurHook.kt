@@ -316,7 +316,9 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                             if (apply.parameterCount == 4) apply.invoke(activeBlur, activeRoot, faded.roundToInt(), false, 1f)
                             else apply.invoke(activeBlur, activeRoot, faded.roundToInt(), false)
                         }.onSuccess { lastPixels = faded }
-                        schedule()
+                        // requestFrame is the field form of schedule(), which is declared later in
+                        // this function and therefore not callable from the frame callback above.
+                        requestFrame?.invoke()
                         return@runCatching
                     }
                     val stillAnimating = activeRoot != null && controller != null && rawExp > 0.01f
