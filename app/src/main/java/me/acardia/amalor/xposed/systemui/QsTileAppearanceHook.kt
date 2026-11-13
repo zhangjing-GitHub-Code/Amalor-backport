@@ -2266,7 +2266,54 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             else chain.proceed()
         }
         r.module.deoptimize(support)
+        installTileStateColors()
         installSolidSliderTrack()
+    }
+
+    /**
+     * With the blur disabled the tiles fall through to the OEM's solid background, whose colours
+     * come from the ColorOS theme rather than the Android dynamic roles: active is
+     * attr/couiColorPrimary read under a forced night context, inactive is opaque white. That
+     * made the tiles disagree with the icon, label and slider colours this module paints from
+     * the palette, so take the four state colours over at the same call sites.
+     */
+    private fun installTileStateColors() {
+        val classes = listOf(
+            "com.oplus.systemui.qs.base.widget.NormalColorTileViewBackground",
+            "com.oplus.systemui.qs.base.widget.NormalOnePlusColorTileViewBackground",
+        )
+        var hooked = 0
+        for (name in classes) {
+            val type = runCatching { r.type(name) }.getOrNull() ?: continue
+            for (method in type.declaredMethods) {
+                val target = when {
+                    method.name == "obtainColorForActive" && method.parameterCount == 2 -> "active"
+                    method.name == "obtainColorForInactive" && method.parameterCount == 1 -> "inactive"
+                    method.name == "obtainColorForUnavailable" && method.parameterCount == 1 -> "unavailable"
+                    else -> null
+                } ?: continue
+                if (method.returnType != Int::class.javaPrimitiveType) continue
+                method.isAccessible = true
+                hooked++
+                r.hook("qs-appearance:tile-color:" + name + ":" + target, method) { chain ->
+                    val result = chain.proceed()
+                    if (!r.enabled(key)) return@hook result
+                    var context: Context? = null
+                    for (index in 0 until chain.args.size) {
+                        (chain.getArg(index) as? Context)?.let { context = it }
+                    }
+                    val ctx = context ?: return@hook result
+                    val palette = colors(ctx)
+                    when (target) {
+                        "active" -> palette.active
+                        "inactive" -> palette.inactive
+                        else -> palette.disabled
+                    }
+                }
+                r.module.deoptimize(method)
+            }
+        }
+        r.info("QS appearance: tile state colour hooks=" + hooked)
     }
 
     /**
