@@ -270,7 +270,7 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
         // SE1 for inactive tiles, SE2 for the icon circle. ColorOS 15 lacks all three, so the
         // surface_container ladder stands in. The panel must take the darkest of the three,
         // otherwise it lands on the same role as the tiles and they disappear into it.
-        val panelBg = namedColor("shade_panel_bg_color") ?: optionalRole("system_surface_container") ?: effect(0)
+        val panelBg = namedColor("shade_panel_bg_color") ?: optionalRole("system_surface_container_lowest") ?: effect(2)
         val panelScrim = namedColor("shade_panel_scrim") ?: namedColor("shade_panel_scrim_color")
         val basePanel = if (panelScrim != null) ColorUtils.compositeColors(panelScrim, panelBg) else panelBg
         val primary = role("system_primary")
@@ -286,7 +286,7 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
         } ?: outputTrack
         Colors(
             active = primary, onActive = role("system_on_primary"),
-            inactive = effect(1),
+            inactive = role("system_surface_container"),
             // surface_effect_2 is the background of an inactive icon circle, not an icon
             // colour. On ColorOS 15 it maps to the lightest container, which left icons
             // invisible on the light theme, so the regular inactive icon role is used.
@@ -2285,6 +2285,13 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
         val classes = listOf(
             "com.oplus.systemui.qs.base.widget.NormalColorTileViewBackground",
             "com.oplus.systemui.qs.base.widget.NormalOnePlusColorTileViewBackground",
+            // The two large tiles run their own background chain, so they need their own entry.
+            // Reaching only the classes above left them on the OEM theme colour, one step lighter
+            // than every other tile.
+            "com.oplus.systemui.qs.base.widget.QsOnePlusHighlightTileViewBackgroundProxyImpl" +
+                "\$NormalColorHighLightTileViewBackground",
+            "com.oplus.systemui.qs.base.widget.QsHighlightTileViewBackgroundProxyImpl" +
+                "\$NormalColorHighLightTileViewBackground",
         )
         var hooked = 0
         for (name in classes) {
