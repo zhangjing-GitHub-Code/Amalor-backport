@@ -308,6 +308,17 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                     // so releasing the blur waits until the last frame instead of snapping on the
                     // first one where qsShowing turns false.
                     val rawExp = controller?.let { (rawExpansion.invoke(it) as Number).toFloat() } ?: 0f
+                    // Fade the radius out first. The window stays visible until the closing
+                    // animation ends, so releasing the blur in one step reads as a hard cut.
+                    if (activeRoot != null && lastPixels > 2.5f) {
+                        val faded = lastPixels * 0.7f
+                        runCatching {
+                            if (apply.parameterCount == 4) apply.invoke(activeBlur, activeRoot, faded.roundToInt(), false, 1f)
+                            else apply.invoke(activeBlur, activeRoot, faded.roundToInt(), false)
+                        }.onSuccess { lastPixels = faded }
+                        schedule()
+                        return@runCatching
+                    }
                     val stillAnimating = activeRoot != null && controller != null && rawExp > 0.01f
                     if (!stillAnimating) {
                         clear()
