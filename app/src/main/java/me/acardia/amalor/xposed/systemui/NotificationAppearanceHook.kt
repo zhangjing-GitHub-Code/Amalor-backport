@@ -111,7 +111,12 @@ internal class NotificationAppearanceHook(
     private fun materialView(view: View): Boolean = active(view) && (ownerOf(view) != null || controls.containsKey(view) ||
         name(view).let { NotificationAppearanceRules.groupCollapseButton(it.namespace, it.name) })
 
-    private fun cardColor(owner: View): Int = colors(owner.context).surfaceContainer
+    /**
+     * The panel behind the cards takes surface_container, so the cards use the next step up.
+     * ColorOS 17 distinguishes the two with dedicated surface-effect roles that 15 does not
+     * publish; on the container ladder this is the closest equivalent.
+     */
+    private fun cardColor(owner: View): Int = colors(owner.context).inactive
 
     private fun disableBlur(proxy: Any, view: View) {
         if (surfaceProxies[view]?.get() !== proxy) surfaceProxies[view] = WeakReference(proxy)
