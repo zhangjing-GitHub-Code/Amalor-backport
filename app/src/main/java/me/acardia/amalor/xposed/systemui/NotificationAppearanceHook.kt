@@ -11,7 +11,6 @@ import android.graphics.drawable.AnimatedVectorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
-import android.view.Display
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -94,8 +93,7 @@ internal class NotificationAppearanceHook(
     }
 
     private fun active(view: View): Boolean {
-        val display = view.display
-        return r.enabled(key) && (display == null || display.state == Display.STATE_ON)
+        return r.enabled(key) && NotificationAppearanceRules.materialDisplayState(view.display?.state)
     }
 
     private fun ownerOf(view: View): View? {
@@ -178,6 +176,7 @@ internal class NotificationAppearanceHook(
         for ((name, install) in listOf<Pair<String, () -> Unit>>(
             "backgrounds" to ::installBackgrounds,
             "content lifecycle" to ::installContent,
+            "AOD text colors" to ::installAodTextColors,
             "heads-up handle" to ::installHeadsUp,
             "groups" to ::installGroups,
             "group transitions" to ::installGroupTransitions,
@@ -325,6 +324,67 @@ internal class NotificationAppearanceHook(
         if (node == null || !active(owner)) return
         repaintingText.set(true)
         try { bindText(view, binding.role, owner) } finally { repaintingText.remove() }
+    }
+
+    private fun installAodTextColors() {
+        val wrapper = r.type("com.oplus.systemui.notification.aod.notification.TextViewAodWrapper")
+        val wrappedView = r.field(wrapper, "view")
+        val model = r.type("com.oplus.systemui.notification.aod.notification.TextAodColor")
+        val end = r.field(model, "end")
+        val current = r.field(model, "curr")
+
+        fun prepare(owner: Any?): TextView? {
+            if (!r.enabled(key)) return null
+            // The OEM reuses this wrapper for several views; resolve its current view every time.
+            val view = wrappedView.get(owner) as? TextView ?: return null
+            val binding = synchronized(texts) { texts[view] }
+            val notification = ownerOf(view) ?: binding?.owner?.get()?.takeIf { root ->
+                var node: View? = view
+                while (node != null && node !== root) node = node.parent as? View
+                node === root
+            } ?: return null
+            val id = name(view)
+            val role = binding?.role ?: NotificationAppearanceRules.textRole(id.namespace, id.name, false, false)
+                ?: return null
+            bindText(view, role, notification)
+            return view
+        }
+
+        val create = wrapper.declaredMethods.single {
+            it.name == "createAodColor" && it.returnType == model &&
+                it.parameterTypes.contentEquals(arrayOf(Int::class.javaPrimitiveType))
+        }
+        r.hook("notification-appearance:aod-text-target", create) { chain ->
+            val view = prepare(chain.thisObject) ?: return@hook chain.proceed()
+            val color = view.currentTextColor
+            chain.proceed().also { value ->
+                if (value != null) end.setInt(value, color)
+            }
+        }
+        val update = wrapper.getDeclaredMethod("updateColor", model, Float::class.javaPrimitiveType)
+        r.hook("notification-appearance:aod-text-update", update) { chain ->
+            val view = prepare(chain.thisObject) ?: return@hook chain.proceed()
+            val value = chain.getArg(0)
+            // The native endpoint is fixed white. Pair it with the notification's material role,
+            // including theme updates while dozing, rather than fighting a white setter each frame.
+            if (end.getInt(value) != view.currentTextColor) end.setInt(value, view.currentTextColor)
+            chain.proceed().also {
+                // A normal-display text hook can also apply a newer palette during the transition.
+                if (current.getInt(value) != view.currentTextColor) current.setInt(value, view.currentTextColor)
+            }
+        }
+        val restore = wrapper.getDeclaredMethod("restoreColor", model)
+        r.hook("notification-appearance:aod-text-restore", restore) { chain ->
+            val view = prepare(chain.thisObject) ?: return@hook chain.proceed()
+            // For these labels normal and AOD roles intentionally agree. The OEM restore check
+            // treats that equality as an error, so restore the current material role directly.
+            current.setInt(chain.getArg(0), view.currentTextColor)
+            null
+        }
+        wrapper.declaredMethods.filter { it.name in setOf("createAodColor", "updateColor", "restoreColor") }
+            .forEach { r.module.deoptimize(it) }
+        r.type("com.oplus.systemui.notification.aod.notification.NotificationDetailColorChanger").declaredMethods
+            .filter { it.name.startsWith("changeAod") }.forEach { r.module.deoptimize(it) }
     }
 
     private fun installTextColors() {

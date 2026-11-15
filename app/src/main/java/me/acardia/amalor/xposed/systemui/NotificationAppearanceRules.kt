@@ -1,5 +1,6 @@
 package me.acardia.amalor.xposed.systemui
 
+import android.view.Display
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 
@@ -9,6 +10,9 @@ internal object NotificationAppearanceRules {
     private val primaryText = setOf("title", "alt_title", "conversation_title", "conversation_text", "message_name", "call_notification_name")
     private val secondaryText = setOf("text", "text2", "big_text", "info", "app_name_text", "header_text",
         "header_text_secondary", "time", "chronometer", "message_text", "text_line_1")
+
+    fun materialDisplayState(state: Int?): Boolean = state == null || state == Display.STATE_ON ||
+        state == Display.STATE_DOZE || state == Display.STATE_DOZE_SUSPEND
 
     /** Select the runtime ABI: optimized OEM builds can retain only the generic View bridge. */
     fun materialMethod(methods: Array<Method>, name: String, context: Class<*>, view: Class<*>, row: Class<*>): Method? =

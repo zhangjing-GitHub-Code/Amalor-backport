@@ -24,6 +24,7 @@ class NativeFeatureHooks(module: XposedModule, loader: ClassLoader) {
         runtime.install(NativeFeatureOptions.BACK_PREDICTIVE_ANIMATION,
             nativeBack || runtime.enabled(NativeFeatureOptions.BACK_PREDICTIVE_ANIMATION)) { backPrediction.install() }
         runtime.install(NativeFeatureOptions.VOLUME_PANEL) { AospVolumeHook(runtime).install() }
+        runtime.install(NativeFeatureOptions.FLASHLIGHT_PANEL) { AospFlashlightHook(runtime).install() }
         runtime.install(NativeFeatureOptions.QS_TILE_NATIVE_APPEARANCE) { QsTileAppearanceHook(runtime).install() }
         runtime.install(NativeFeatureOptions.HIDE_NON_DATA_SIM) { dataSimSignal.install() }
     }

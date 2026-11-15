@@ -59,6 +59,8 @@
     <string name="restart_scopes">Restart the following scopes?</string>
     <string name="config_native_volume">Native volume panel</string>
     <string name="config_native_volume_desc">Use the native volume panel</string>
+    <string name="config_native_flashlight">Native flashlight panel</string>
+    <string name="config_native_flashlight_desc">Use the native flashlight panel</string>
     <string name="config_native_clipboard">Native clipboard</string>
     <string name="config_native_clipboard_desc">Force enable the native clipboard</string>
     <!-- Status bar: battery -->

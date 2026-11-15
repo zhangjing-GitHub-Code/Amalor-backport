@@ -66,6 +66,8 @@
     <string name="restart_scopes">重启 以下作用域？</string>
     <string name="config_native_volume">原生音量面板</string>
     <string name="config_native_volume_desc">使用原生音量面板</string>
+    <string name="config_native_flashlight">原生手电筒面板</string>
+    <string name="config_native_flashlight_desc">使用原生手电筒面板</string>
     <string name="config_native_clipboard">原生剪贴板</string>
     <string name="config_native_clipboard_desc">强制启用原生剪贴板</string>
 

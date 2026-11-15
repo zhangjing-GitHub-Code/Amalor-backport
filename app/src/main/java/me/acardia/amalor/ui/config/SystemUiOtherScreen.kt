@@ -65,10 +65,11 @@ fun SystemUiOtherScreen(
                     Triple(NativeFeatureOptions.POWER_MENU, R.string.config_native_power, R.drawable.ic_power_menu),
                     Triple(NativeFeatureOptions.BACK_PANEL, R.string.config_back_gesture, R.drawable.ic_edge_gesture),
                     Triple(NativeFeatureOptions.VOLUME_PANEL, R.string.config_native_volume, R.drawable.ic_volume_panel),
+                    Triple(NativeFeatureOptions.FLASHLIGHT_PANEL, R.string.config_native_flashlight, R.drawable.ic_flashlight),
                     Triple(NativeFeatureOptions.CLIPBOARD, R.string.config_native_clipboard, R.drawable.ic_clipboard),
                 )
                 val descriptions = listOf(R.string.config_native_power_desc, R.string.config_back_gesture_desc,
-                    R.string.config_native_volume_desc, R.string.config_native_clipboard_desc)
+                    R.string.config_native_volume_desc, R.string.config_native_flashlight_desc, R.string.config_native_clipboard_desc)
                 features.forEachIndexed { index, (key, title, icon) ->
                     item(key = key) { shape ->
                         SwitchWidget(

@@ -430,7 +430,11 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
     private fun mediaSourceSurface(view: View): DetailSurface? {
         var current: View? = view
         while (current != null) {
-            synchronized(mediaSources) { mediaSources[current]?.get() }?.let { return it }
+            synchronized(mediaSources) { mediaSources[current]?.get() }?.let {
+                // Closing via the nested output page has no MediaDialog animation owner.
+                // Its saved color fraction must not keep the small card's drawing suppressed.
+                if (QsAppearanceRules.mediaTransitionActive(it.mediaOwner.get() != null, it.mediaProgress)) return it
+            }
             current = current.parent as? View
         }
         return null
@@ -733,13 +737,39 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
                     val background = if (qsDetail.isInstance(root)) detailFrame.get(root) as? View
                         else outputContainer.get(chain.thisObject) as? View
                     if (background != null) {
-                        remember(root, background)
+                        val surface = remember(root, background)
+                        // The nested media transition targets detail_container itself, not mDetailFrame.
+                        // Keep that concrete target bound even when the animation reparents it.
+                        (outputContainer.get(chain.thisObject) as? View)?.let { container ->
+                            synchronized(detailRoots) { detailRoots[container] = surface }
+                        }
                         prepareDetailBackground?.invoke(background)
                     }
                 }
             }
         }
         r.module.deoptimize(outputCreate)
+        val outputEnd = r.type("com.oplus.systemui.media.qsdetail.OplusMediaOutputEndController")
+        val outputTarget = r.field(outputEnd, "targetView")
+        val outputProgress = outputEnd.getDeclaredMethod("updateTargetView",
+            r.type("com.android.systemui.animation.TransitionAnimator\$State"),
+            Float::class.javaPrimitiveType, Float::class.javaPrimitiveType)
+        r.hook("qs-appearance:media-output-frame-outline", outputProgress) { chain ->
+            chain.proceed().also {
+                if (r.enabled(key)) {
+                    val view = outputTarget.get(chain.thisObject) as View
+                    // This controller bypasses the base animated-outline path and only changes
+                    // View bounds. Refresh the actual target's fill and outline at those bounds.
+                    prepareDetailBackground?.invoke(view)
+                    view.background?.setBounds(0, 0, view.width, view.height)
+                    view.invalidateOutline()
+                }
+            }
+        }
+        r.module.deoptimize(outputProgress)
+        r.module.deoptimize(outputEnd.getDeclaredMethod("onTransitionAnimationProgress",
+            r.type("com.android.systemui.animation.TransitionAnimator\$State"),
+            Float::class.javaPrimitiveType, Float::class.javaPrimitiveType))
         val proxy = r.type("com.oplusos.systemui.common.blurability.ViewBlurProxy")
         val getView = proxy.getDeclaredMethod("getView")
         val getEnabled = proxy.getDeclaredMethod("getBlurEnabled")
@@ -1157,11 +1187,43 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
         check(fillField.type == ShapeDrawable::class.java && animator.type == ValueAnimator::class.java)
         val hosts = WeakHashMap<View, WeakReference<View>>()
         val cardScope = ThreadLocal<Boolean?>()
+        val battery = r.type("com.oplus.deviceplugin.sdk.ui.view.progressbar.BatteryCircularProgressLayout")
+        val deviceIcon = r.field(battery, "f")
+        val batteryStates = WeakHashMap<View, Int>()
+        val progress = r.type("com.oplus.deviceplugin.sdk.ui.view.progressbar.BatteryCircularProgressBar")
+        val progressColor = r.field(progress, "a")
+        val trackColor = r.field(progress, "b")
         var reported = false
+
+        fun card(view: View): View? {
+            var current: View? = view
+            while (current != null) {
+                if (base.isInstance(current)) return current
+                current = current.parent as? View
+            }
+            return null
+        }
 
         fun tintContent(root: View) {
             val palette = colors(root.context)
             fun visit(view: View) {
+                if (battery.isInstance(view)) {
+                    // The SDK clears its active-icon filter in dark mode, leaving a dark resource
+                    // on our dark SE1 card. This field is the resource glyph, not device artwork.
+                    val unavailable = !root.isEnabled || !view.isEnabled ||
+                        QsAppearanceRules.deviceSpaceUnavailable(batteryStates[view])
+                    (deviceIcon.get(view) as? ImageView)?.let {
+                        tintImage(it, if (unavailable) palette.disabledIcon else palette.onInactive)
+                    }
+                }
+                if (progress.isInstance(view)) {
+                    view.isForceDarkAllowed = false
+                    if (progressColor.getInt(view) != palette.active || trackColor.getInt(view) != palette.secondaryContainer) {
+                        progressColor.setInt(view, palette.active)
+                        trackColor.setInt(view, palette.secondaryContainer)
+                        view.invalidate()
+                    }
+                }
                 val name = runCatching { view.resources.getResourceEntryName(view.id) }.getOrDefault("")
                 QsAppearanceRules.secondaryDeviceSpaceForeground(name)?.let { secondary ->
                     val color = when {
@@ -1261,6 +1323,31 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
                 chain.proceed().also {
                     if (r.enabled(key)) runCatching { tintContent(chain.thisObject as View) }
                         .onFailure { fallback("device-space foreground", it) }
+                }
+            }
+            r.module.deoptimize(method)
+        }
+        for (method in battery.declaredMethods.filter {
+            it.name in setOf("setDeviceIcon", "setDeviceIconWithAnimation", "onConfigurationChanged", "d") ||
+                it.name in setOf("a", "b") && it.parameterTypes.contentEquals(
+                    arrayOf(Int::class.javaPrimitiveType, Int::class.javaPrimitiveType))
+        }) {
+            r.hook("qs-appearance:device-battery-glyph:$method", method) { chain ->
+                val view = chain.thisObject as View
+                if (method.name == "a" || method.name == "b") batteryStates[view] = chain.getArg(1) as Int
+                chain.proceed().also {
+                    if (r.enabled(key)) card(view)?.let(::tintContent)
+                }
+            }
+            r.module.deoptimize(method)
+        }
+        for (name in listOf("setProgressBarColor", "setProgressBarTrackColor")) {
+            val method = progress.getDeclaredMethod(name, Int::class.javaPrimitiveType)
+            r.hook("qs-appearance:device-battery-$name", method) { chain ->
+                val root = if (r.enabled(key)) card(chain.thisObject as View) else null
+                if (root == null) chain.proceed() else {
+                    val palette = colors(root.context)
+                    chain.proceed(arrayOf(if (name == "setProgressBarColor") palette.active else palette.secondaryContainer))
                 }
             }
             r.module.deoptimize(method)
@@ -1760,6 +1847,7 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             .getDeclaredMethod("applyFrameCornerRadii", r.type("com.android.systemui.animation.TransitionAnimator\$State"), Float::class.javaPrimitiveType))
         r.type("com.android.systemui.animation.OplusMediaPanelAnimator").declaredMethods.filter { it.name == "prepareExpand" }
             .forEach { r.module.deoptimize(it) }
+
     }
 
     private fun installExpandedMedia() {
@@ -1931,14 +2019,16 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
                 value.root.get()?.let { solidDetailBackground(it, it.background) }
             }
         }
-        for (method in type.declaredMethods.filter { it.name == "onTransitionAnimationEnd" || it.name == "onTransitionAnimationCancelled" }) {
+        for (method in type.declaredMethods.filter { it.name in setOf("onTransitionAnimationEnd",
+            "onTransitionAnimationCancelled", "onShowMediaOutputDialog", "resetView") }) {
             r.hook("qs-appearance:media-color-end:$method", method) { chain ->
                 try { chain.proceed() } finally {
                     transitions.remove(chain.thisObject)?.let { value ->
                         if (value.surface.mediaOwner.get() === chain.thisObject) {
                             value.surface.mediaOwner.clear()
                             value.surface.mediaProgress = null
-                            if (method.name == "onTransitionAnimationCancelled") value.surface.closing = false
+                            if (method.name == "onTransitionAnimationCancelled" || method.name == "onShowMediaOutputDialog")
+                                value.surface.closing = false
                             value.root.get()?.let { solidDetailBackground(it, it.background) }
                             value.sourceBackground.get()?.invalidate()
                         }
@@ -1966,7 +2056,9 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
             val detailCover = chain.getArg(0) == "TYPE_COVER_IMG" && chain.getArg(4) == true
             if (!sourceBackground && !detailCover) return@hook chain.proceed()
             val root = detailContainer.get(chain.thisObject) as? View
-            val transitioning = root != null && detailSurface(root)?.mediaProgress != null
+            val transitioning = root?.let(::detailSurface)?.let {
+                QsAppearanceRules.mediaTransitionActive(it.mediaOwner.get() != null, it.mediaProgress)
+            } == true
             val source = if (detailCover) simpleProvider.get(chain.thisObject) else null
             val placeholderAlpha = if (transitioning && detailCover &&
                     source != null && simplePanel.isInstance(source) && defaultCover.getBoolean(source))

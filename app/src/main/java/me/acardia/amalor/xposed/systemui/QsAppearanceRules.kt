@@ -39,7 +39,7 @@ internal object QsAppearanceRules {
     fun backgroundAlpha(roleColor: Int, drawableAlpha: Int): Int =
         (roleColor ushr 24) * drawableAlpha.coerceIn(0, 255) / 255
 
-    /** Only device-space chrome is recolored; device artwork and battery graphics are content. */
+    /** Resource-name roles cover chrome; battery widgets are bound by their concrete SDK type. */
     fun secondaryDeviceSpaceForeground(resourceName: String): Boolean? = when (resourceName) {
         "no_entrance_title", "rectangle_entrance_title", "rectangle_panel_title",
         "no_device_space_icon", "rectangle_entrance_icon", "square_entrance_icon" -> false
@@ -47,6 +47,11 @@ internal object QsAppearanceRules {
         "rectangle_status_image" -> true
         else -> null
     }
+
+    fun deviceSpaceUnavailable(state: Int?): Boolean = state == 2 || state == 3
+
+    fun mediaTransitionActive(hasOwner: Boolean, progress: Float?): Boolean =
+        hasOwner && progress != null && progress.isFinite()
 
     fun mediaDetailFraction(start: Float, expanding: Boolean, progress: Float): Float {
         val from = start.coerceIn(0f, 1f)

@@ -59,6 +59,8 @@
     <string name="restart_scopes">Перезапустить следующие области действия?</string>
     <string name="config_native_volume">Нативная панель громкости</string>
     <string name="config_native_volume_desc">Использовать нативную панель громкости</string>
+    <string name="config_native_flashlight">Нативная панель фонарика</string>
+    <string name="config_native_flashlight_desc">Использовать нативную панель фонарика</string>
     <string name="config_native_clipboard">Нативный буфер обмена</string>
     <string name="config_native_clipboard_desc">Принудительно включить нативный буфер обмена</string>
     <!-- Строка состояния: батарея -->
