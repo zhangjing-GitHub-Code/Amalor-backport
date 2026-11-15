@@ -50,8 +50,7 @@ def collect_commits(base, head):
     head = resolve(head)
     if base:
         base = resolve(base)
-        if subprocess.run(["git", "merge-base", "--is-ancestor", base, head], capture_output=True).returncode:
-            raise ValueError("Previous release must be an ancestor of the release commit")
+    # A..B lists commits in B that are not in A, including divergent main/dev releases.
     fields = git("log", "--no-merges", "--reverse", "--format=%H%x00%s%x00%b%x00%ae%x00",
                  f"{base}..{head}" if base else head).split("\0")
     if not fields[-1].strip():
