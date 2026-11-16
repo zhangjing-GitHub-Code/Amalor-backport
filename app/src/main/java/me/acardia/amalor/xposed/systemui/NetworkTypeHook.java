@@ -29,6 +29,13 @@ public final class NetworkTypeHook {
             "com.android.systemui.statusbar.pipeline.shared.ui.composable.";
     static final String VIEW_BINDING =
             "com.oplus.systemui.statusbar.pipeline.mobile.ui.view.OplusStatusBarMobileViewBinder$Os17Binding";
+    /**
+     * ColorOS 15 has no Os17Binding, so the network type is a vector icon rather than text and
+     * the font and artwork hooks above have nothing to attach to. The layout is still selected
+     * through the view binder factory, which does exist there.
+     */
+    private static final String VIEW_15 =
+            "com.oplus.systemui.statusbar.pipeline.mobile.ui.view.";
 
     // Compose uses three changed bits and one default bit per source parameter.
     private static final int FONT_CHANGED_MASK = (7 << 13) | (7 << 16) | (7 << 19);
@@ -77,8 +84,26 @@ public final class NetworkTypeHook {
                 nativeLayoutInstalled = true;
                 HookLog.write(module, Log.INFO, TAG, "installed native independent network-type layout feature");
             } catch (Throwable error) {
-                HookLog.write(module, Log.ERROR, TAG, "native network-type layout feature hook failed", error);
+                // The feature-provider path only exists on 16 and later. Fall back to selecting
+                // the BigType binder directly, which is how 15 exposes the same layout.
+                try {
+                    installViewBinder15(loader);
+                    nativeLayoutInstalled = true;
+                    HookLog.write(module, Log.INFO, TAG, "installed ColorOS 15 BigType view binder");
+                } catch (Throwable fallback) {
+                    HookLog.write(module, Log.ERROR, TAG, "network-type layout hook failed", fallback);
+                }
             }
+        }
+        if (!viewFontInstalled && !hasClass(loader, VIEW_BINDING)) {
+            // 15 renders the type as a vector icon, so there is no label to re-typeface. Report
+            // once and mark it done rather than retrying on every callback.
+            viewFontInstalled = true;
+            HookLog.write(module, Log.INFO, TAG, "network type is not text here; font change skipped");
+        }
+        if (!viewArtworkInstalled && !hasClass(loader, VIEW_BINDING)) {
+            viewArtworkInstalled = true;
+            HookLog.write(module, Log.INFO, TAG, "network artwork binding absent; artwork change skipped");
         }
         if (!strategyInstalled) {
             try {
@@ -126,6 +151,10 @@ public final class NetworkTypeHook {
         }
     }
 
+    private static boolean hasClass(ClassLoader loader, String name) {
+        try { loader.loadClass(name); return true; } catch (Throwable absent) { return false; }
+    }
+
     private void installNativeLayout(ClassLoader loader) throws ReflectiveOperationException {
         String provider = "com.oplus.coreapp.appfeature.AppFeatureProviderUtils";
         Method query = loader.loadClass(provider).getDeclaredMethod("isFeatureSupport",
@@ -137,6 +166,43 @@ public final class NetworkTypeHook {
                 .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
                 .intercept(chain -> "com.android.systemui.statusbar_show_big_5g".equals(chain.getArg(2))
                         ? true : chain.proceed());
+    }
+
+    /**
+     * ColorOS 15 equivalent of installNativeLayout: pick the BigType view binder directly
+     * because the feature flag it would otherwise consult is only honoured by 16 and later.
+     */
+    private void installViewBinder15(ClassLoader loader) throws ReflectiveOperationException {
+        Class<?> factory = loader.loadClass(VIEW_15 + "OplusMobileViewBinderFactory");
+        Method getter = factory.getDeclaredMethod("getMobileViewBinder");
+        getter.setAccessible(true);
+        Class<?> bigType = loader.loadClass(VIEW_15 + "BigTypeStatusBarMobileViewBinder");
+        Class<?> lazy = null;
+        try { lazy = loader.loadClass("dagger.Lazy"); } catch (Throwable absent) { /* optional */ }
+        module.hook(getter).setId("amalor-15-bigtype-view-binder")
+                .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                .intercept(chain -> {
+                    Object chosen = chain.proceed();
+                    if (bigType.isInstance(chosen)) return chosen;
+                    Object cached = null;
+                    try {
+                        for (Field field : factory.getDeclaredFields()) {
+                            if (field.getType() == bigType) {
+                                field.setAccessible(true);
+                                cached = field.get(chain.getThisObject());
+                                break;
+                            }
+                        }
+                        if (cached == null && lazy != null && lazy.isInstance(chosen)) {
+                            Method invoke = lazy.getMethod("get");
+                            Object inner = invoke.invoke(chosen);
+                            if (bigType.isInstance(inner)) cached = inner;
+                        }
+                    } catch (Throwable ignored) {
+                        // Reflection miss only means the plain binder stays selected.
+                    }
+                    return cached != null ? cached : chosen;
+                });
     }
 
     private void installViewNetworkFont(ClassLoader loader) throws ReflectiveOperationException, IOException {
