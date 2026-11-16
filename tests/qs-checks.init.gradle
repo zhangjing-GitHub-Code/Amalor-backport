@@ -1,0 +1,40 @@
+// Run with: gradlew -I tests/qs-checks.init.gradle :app:checkQsAppearance --offline
+import org.gradle.api.attributes.Attribute
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+
+gradle.projectsEvaluated {
+    def p = gradle.rootProject.project(':app')
+    def checks = ['QsAppearanceRulesCheck', 'QsSliderRulesCheck', 'QsShapeRulesCheck', 'QsShapeSpringCheck',
+                  'NotificationAppearanceRulesCheck', 'NotificationAdapterCompatibilityCheck', 'QsClickMotionCheck', 'BackGestureRulesCheck',
+                  'AospVolumeMotionCheck', 'FlashlightPanelRulesCheck', 'BatteryTextGeometryCheck']
+        .collect { "me.acardia.amalor.xposed.systemui.${it}" } +
+        ['me.acardia.amalor.xposed.launcher.LauncherBadgePaletteCheck',
+         'me.acardia.amalor.xposed.launcher.LauncherCompatibilityCheck',
+          'me.acardia.amalor.xposed.uxdesign.WallpaperColorPaletteCheck',
+          'me.acardia.amalor.ui.navigation.NavigationActionsCheck']
+    def jars = p.configurations.releaseRuntimeClasspath.incoming.artifactView {
+        attributes.attribute(Attribute.of('artifactType', String), 'android-classes-jar')
+    }.files
+    def classes = p.layout.buildDirectory.dir('intermediates/built_in_kotlinc/release/compileReleaseKotlin/classes')
+    // The real Android SnapshotStateList implements Parcelable; no Parcel operations are used here.
+    def androidBoot = p.extensions.getByName('androidComponents').sdkComponents.bootClasspath
+    def output = p.layout.buildDirectory.dir('qs-appearance-check')
+    def compile = p.tasks.register('compileQsAppearanceChecks', JavaCompile) {
+        dependsOn 'compileReleaseKotlin'
+        source checks.collect { p.rootProject.file("tests/${it.tokenize('.').last()}.java") }
+        classpath = p.files(classes, jars, androidBoot)
+        destinationDirectory.set(output)
+        options.encoding = 'UTF-8'
+        javaCompiler.set(p.javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(25) })
+    }
+    def runs = checks.collect { qualifiedName ->
+        def name = qualifiedName.tokenize('.').last()
+        p.tasks.register("run${name}", JavaExec) {
+            dependsOn compile
+            classpath = p.files(output, classes, jars, androidBoot)
+            mainClass.set(qualifiedName)
+            javaLauncher.set(p.javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(25) })
+        }
+    }
+    p.tasks.register('checkQsAppearance') { dependsOn runs }
+}
