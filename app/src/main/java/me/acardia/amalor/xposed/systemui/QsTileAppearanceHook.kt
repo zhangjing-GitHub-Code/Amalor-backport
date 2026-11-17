@@ -105,6 +105,8 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
         val onInactive: Int, val onSecondary: Int, val panel: Int, val disabled: Int, val disabledIcon: Int,
         val surfaceContainer: Int, val outlineVariant: Int, val secondaryContainer: Int,
         val surfaceContainerHighest: Int,
+        /** Background of the large tile's icon circle; a surface role, not a foreground one. */
+        val highlightIconBg: Int,
         val outputTrack: Int, val outputProgress: Int,
     )
     private enum class SurfaceKind { Tile, HighlightCard, HighlightIcon, SelectedIndicator, Control, PrimaryControl, Detail, Media }
@@ -306,6 +308,8 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
         Colors(
             active = primary, onActive = role("system_on_primary"),
             inactive = role("system_surface_container"),
+            // The icon circle sits on the tile, so it takes the next step up the ladder.
+            highlightIconBg = role("system_surface_container_low"),
             // surface_effect_2 is the background of an inactive icon circle, not an icon
             // colour. On ColorOS 15 it maps to the lightest container, which left icons
             // invisible on the light theme, so the regular inactive icon role is used.
@@ -2853,7 +2857,7 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
                 target.kind == SurfaceKind.SelectedIndicator -> palette.active
                 target.kind == SurfaceKind.HighlightCard -> palette.inactive
                 active -> palette.active
-                target.kind == SurfaceKind.HighlightIcon -> palette.inactiveIcon
+                target.kind == SurfaceKind.HighlightIcon -> palette.highlightIconBg
                 else -> palette.inactive
             }
             val paint = synchronized(backgrounds) { backgrounds.getOrPut(view) { Paint(Paint.ANTI_ALIAS_FLAG) } }
