@@ -2582,7 +2582,63 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
         }
         r.module.deoptimize(support)
         installTileStateColors()
+        installHighlightIconBackground()
         installSolidSliderTrack()
+    }
+
+    /**
+     * The two large tiles paint an icon circle through OplusQSIconView, whose own background is a
+     * GradientDrawable filled with #19ffffff for both active and inactive. Ten percent white reads
+     * as nothing once the tile behind it is a solid colour, so the circle disappears.
+     *
+     * tintBgColor only runs for the large-icon types, so replacing the colour here cannot affect
+     * ordinary tiles.
+     */
+    private fun installHighlightIconBackground() {
+        runCatching {
+            val iconView = r.type("com.oplus.systemui.plugins.qs.tile.OplusQSIconView")
+            val tint = iconView.declaredMethods.firstOrNull {
+                it.name == "tintBgColor" && it.parameterCount == 2 &&
+                    it.parameterTypes[0] == Boolean::class.javaPrimitiveType &&
+                    it.parameterTypes[1] == Int::class.javaPrimitiveType
+            } ?: return@runCatching
+            tint.isAccessible = true
+            r.hook("qs-appearance:highlight-icon-background", tint) { chain ->
+                val result = chain.proceed()
+                if (!r.enabled(key)) return@hook result
+                runCatching {
+                    val owner = chain.thisObject as? View ?: return@runCatching
+                    val canTips = chain.getArg(0) as? Boolean ?: return@runCatching
+                    // Nothing is drawn when canTips is false; leave that state alone.
+                    if (!canTips) return@runCatching
+                    val tileState = chain.getArg(1) as? Int ?: return@runCatching
+                    val palette = colors(owner.context)
+                    // Active keeps a light circle on the coloured tile; the other states take a
+                    // fainter one so the icon still reads as sitting on its own surface.
+                    val color = if (tileState == 2 || tileState == 101) palette.highlightIconBg
+                    else ColorUtils.setAlphaComponent(palette.highlightIconBg, 0x40)
+                    val drawable = owner.background as? GradientDrawable
+                    if (drawable != null) {
+                        drawable.setColor(color)
+                    } else {
+                        owner.background = GradientDrawable().apply {
+                            shape = GradientDrawable.RECTANGLE
+                            cornerRadius = owner.resources.displayMetrics.density * 20f
+                            setColor(color)
+                        }
+                    }
+                    if (stateProbe.add("icon-bg")) {
+                        r.info("QS label: highlight icon circle %08x state=%d".format(color, tileState))
+                    }
+                }.onFailure { fallback("highlight icon background", it) }
+                result
+            }
+            r.module.deoptimize(tint)
+            r.info("QS appearance: installed highlight icon background")
+        }.onFailure {
+            if (it.absentTarget() == null) throw it
+            r.info("QS appearance: highlight icon background absent")
+        }
     }
 
     /**
