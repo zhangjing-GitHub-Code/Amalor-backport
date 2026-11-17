@@ -36,6 +36,8 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
     private var lastPixels = -1f
     /** Last target and helper, kept so the fade can finish after clear() retires them. */
     private var lastRoot: Any? = null
+    /** Frames spent fading since the last apply, for the debug trace. */
+    private var fadeFrames = 0
     private var lastHelper: Any? = null
     /** Number of ratio samples already logged. */
     private var ratioProbe = 0
@@ -310,15 +312,18 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                     val fadingRoot = activeRoot ?: lastRoot
                     val fadingBlur = activeBlur ?: lastHelper
                     if (fadingRoot != null && fadingBlur != null && lastPixels > 2.5f) {
-                        val faded = (lastPixels * 0.7f).coerceAtLeast(0f)
+                        val from = lastPixels
+                        val faded = (from * 0.7f).coerceAtLeast(0f)
                         runCatching {
                             if (apply.parameterCount == 4) apply.invoke(fadingBlur, fadingRoot, faded.roundToInt(), false, 1f)
                             else apply.invoke(fadingBlur, fadingRoot, faded.roundToInt(), false)
                             lastPixels = faded
                             activeRoot = fadingRoot
                             activeBlur = fadingBlur
-                            if (frameReported.add("fading")) {
-                                r.debug("QS blur: fading out, next radius=" + faded.roundToInt())
+                            fadeFrames++
+                            if (fadeFrames <= 24) {
+                                r.debug("QS blur: fade " + fadeFrames + " " + from.roundToInt() +
+                                    " -> " + faded.roundToInt())
                             }
                         }
                         requestFrame?.invoke()
@@ -391,6 +396,7 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 activeBlur = helper
                 lastRoot = target
                 lastHelper = helper
+                fadeFrames = 0
                 if (activeView.get() !== view) activeView = WeakReference(view)
                 tintFraction = nextFraction
                 lastRatio = ratio
