@@ -399,6 +399,10 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 if (!reported) { reported = true; r.error("QS panel blur fallback", it.cause ?: it) }
                 runCatching { clear() }
             }
+            // Keep the callback chain alive while the radius is still fading. The panel's own
+            // hooks stop running once it starts closing, so without this the fade would need a
+            // frame that nothing schedules and the blur would snap on the next unrelated event.
+            if (activeRoot != null && lastPixels > 2.5f) requestFrame?.invoke()
         }
         fun schedule() {
             if (Looper.myLooper() != Looper.getMainLooper()) { main.post { requestFrame?.invoke() }; return }
