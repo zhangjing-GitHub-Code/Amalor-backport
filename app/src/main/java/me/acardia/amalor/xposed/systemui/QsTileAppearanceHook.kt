@@ -308,8 +308,11 @@ internal class QsTileAppearanceHook(private val r: NativeFeatures) {
         Colors(
             active = primary, onActive = role("system_on_primary"),
             inactive = role("system_surface_container"),
-            // The icon circle sits on the tile, so it takes the next step up the ladder.
-            highlightIconBg = role("system_surface_container_low"),
+            // The icon circle sits above the tile, so it takes the next elevation step. In M3 the
+            // container ladder inverts between themes: _low is brighter than _container in light
+            // but darker in dark, while _high is one step darker in light and one step lighter in
+            // dark. That is the direction an elevated surface takes in both.
+            highlightIconBg = role("system_surface_container_high"),
             // surface_effect_2 is the background of an inactive icon circle, not an icon
             // colour. On ColorOS 15 it maps to the lightest container, which left icons
             // invisible on the light theme, so the regular inactive icon role is used.
