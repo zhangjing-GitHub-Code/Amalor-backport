@@ -35,9 +35,14 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
     /** Previous frame's blur radius, used to ease out discontinuities between panel sources. */
     private var lastPixels = -1f
     /** Last target and helper, kept so the fade can finish after clear() retires them. */
+    /** Wall time the fade covers, matched to the shade collapse animation. */
+    private val FADE_MILLIS = 260f
     private var lastRoot: Any? = null
     /** Frames spent fading since the last apply, for the debug trace. */
     private var fadeFrames = 0
+    /** Fade timing, so the collapse lasts the same wall time regardless of frame rate. */
+    private var fadeStartedAt = 0L
+    private var fadeStartRadius = 0f
     private var lastHelper: Any? = null
     /** Number of ratio samples already logged. */
     private var ratioProbe = 0
@@ -312,8 +317,19 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                     val fadingRoot = activeRoot ?: lastRoot
                     val fadingBlur = activeBlur ?: lastHelper
                     if (fadingRoot != null && fadingBlur != null && lastPixels > 2.5f) {
-                        val from = lastPixels
-                        val faded = (from * 0.7f).coerceAtLeast(0f)
+                        // Decay against wall time rather than a frame count: the closing animation
+                        // runs for a fixed duration, while the frame callback can fire at a
+                        // different rate, which made the fade finish in a fraction of it and left
+                        // the rest of the collapse flat.
+                        val now = System.nanoTime()
+                        if (fadeStartedAt == 0L) {
+                            fadeStartedAt = now
+                            fadeStartRadius = lastPixels
+                        }
+                        val elapsed = (now - fadeStartedAt) / 1_000_000f
+                        val progress = (elapsed / FADE_MILLIS).coerceIn(0f, 1f)
+                        val from = fadeStartRadius
+                        val faded = (from * (1f - progress)).coerceAtLeast(0f)
                         runCatching {
                             if (apply.parameterCount == 4) apply.invoke(fadingBlur, fadingRoot, faded.roundToInt(), false, 1f)
                             else apply.invoke(fadingBlur, fadingRoot, faded.roundToInt(), false)
@@ -397,6 +413,8 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 lastRoot = target
                 lastHelper = helper
                 fadeFrames = 0
+                fadeStartedAt = 0L
+                fadeStartRadius = 0f
                 if (activeView.get() !== view) activeView = WeakReference(view)
                 tintFraction = nextFraction
                 lastRatio = ratio
