@@ -177,8 +177,13 @@ public final class NetworkTypeHook {
         Method getter = factory.getDeclaredMethod("getMobileViewBinder");
         getter.setAccessible(true);
         Class<?> bigType = loader.loadClass(VIEW_15 + "BigTypeStatusBarMobileViewBinder");
-        Class<?> lazy = null;
-        try { lazy = loader.loadClass("dagger.Lazy"); } catch (Throwable absent) { /* optional */ }
+        Class<?> lazyType;
+        try {
+            lazyType = loader.loadClass("dagger.Lazy");
+        } catch (Throwable absent) {
+            lazyType = null;
+        }
+        final Class<?> lazy = lazyType;
         module.hook(getter).setId("amalor-15-bigtype-view-binder")
                 .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
                 .intercept(chain -> {
