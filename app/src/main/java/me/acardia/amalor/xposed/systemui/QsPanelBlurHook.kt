@@ -34,6 +34,9 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
     private var lastRatio = 0f
     /** Previous frame's blur radius, used to ease out discontinuities between panel sources. */
     private var lastPixels = -1f
+    /** Last target and helper, kept so the fade can finish after clear() retires them. */
+    private var lastRoot: Any? = null
+    private var lastHelper: Any? = null
     /** Number of ratio samples already logged. */
     private var ratioProbe = 0
     /** Latest shade expansion reported by setRawPanelExpansionFraction, updated every frame. */
@@ -300,28 +303,28 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                     supports.invoke(null) == true && crossEnabled.invoke(cross) == true && gaussDisabled.invoke(null) != true &&
                     view.context.getSystemService(PowerManager::class.java)?.isPowerSaveMode != true
                 if (!allowed) {
-                    // A single frame outside the allowed window during a panel transition would
-                    // otherwise drop the blur and show the window underneath. Only release it
-                    // once the panel has actually left the visible range.
-                    // ratio is binary now, so it cannot say whether the panel is still moving. Use
-                    // the raw expansion, which stays above zero for the whole collapse animation,
-                    // so releasing the blur waits until the last frame instead of snapping on the
-                    // first one where qsShowing turns false.
+                    // The gate closes the moment qsShowing turns false, which is the first frame
+                    // of the closing animation. Dropping the radius there is what showed as a
+                    // hard cut, so keep easing it down while anything is still on screen.
                     val rawExp = controller?.let { (rawExpansion.invoke(it) as Number).toFloat() } ?: 0f
-                    // Fade the radius out first. The window stays visible until the closing
-                    // animation ends, so releasing the blur in one step reads as a hard cut.
-                    if (activeRoot != null && lastPixels > 2.5f) {
-                        val faded = lastPixels * 0.7f
+                    val fadingRoot = activeRoot ?: lastRoot
+                    val fadingBlur = activeBlur ?: lastHelper
+                    if (fadingRoot != null && fadingBlur != null && lastPixels > 2.5f) {
+                        val faded = (lastPixels * 0.7f).coerceAtLeast(0f)
                         runCatching {
-                            if (apply.parameterCount == 4) apply.invoke(activeBlur, activeRoot, faded.roundToInt(), false, 1f)
-                            else apply.invoke(activeBlur, activeRoot, faded.roundToInt(), false)
-                        }.onSuccess { lastPixels = faded }
-                        // requestFrame is the field form of schedule(), which is declared later in
-                        // this function and therefore not callable from the frame callback above.
+                            if (apply.parameterCount == 4) apply.invoke(fadingBlur, fadingRoot, faded.roundToInt(), false, 1f)
+                            else apply.invoke(fadingBlur, fadingRoot, faded.roundToInt(), false)
+                            lastPixels = faded
+                            activeRoot = fadingRoot
+                            activeBlur = fadingBlur
+                            if (frameReported.add("fading")) {
+                                r.debug("QS blur: fading out, next radius=" + faded.roundToInt())
+                            }
+                        }
                         requestFrame?.invoke()
                         return@runCatching
                     }
-                    val stillAnimating = activeRoot != null && controller != null && rawExp > 0.01f
+                    val stillAnimating = controller != null && rawExp > 0.01f && lastPixels > 2.5f
                     if (!stillAnimating) {
                         clear()
                         if (frameReported.add("clear-reason")) {
@@ -386,6 +389,8 @@ internal class QsPanelBlurHook(private val r: NativeFeatures, private val surfac
                 val repaint = activeView.get() !== view || tintFraction != nextFraction || panelColor != nextColor
                 activeRoot = target
                 activeBlur = helper
+                lastRoot = target
+                lastHelper = helper
                 if (activeView.get() !== view) activeView = WeakReference(view)
                 tintFraction = nextFraction
                 lastRatio = ratio
